@@ -30,7 +30,11 @@ enum BLEProtocol {
     static let farRSSIThresholdDBm = -95
 
     /// Maximum time allowed for discovery + connect + full authentication handshake.
-    static let authTimeoutSeconds: TimeInterval = 8
+    ///
+    /// Budget: two 4 s connect attempts (see `GATTChallengeClient.connectWatchdogSeconds`)
+    /// plus a 0.3 s retry gap, ~0.9 s of service discovery and ~0.2 s for the challenge
+    /// round trip — about 9.4 s worst case. A measured successful cycle is 1.8-2.9 s.
+    static let authTimeoutSeconds: TimeInterval = 12
 
     /// The Mac gives up on an in-flight challenge after this long (must be <= Android's expiry).
     static let challengeExpirySeconds: TimeInterval = 10

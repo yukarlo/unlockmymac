@@ -69,6 +69,28 @@ final class GATTChallengeClient: NSObject {
     private var timeoutWorkItem: DispatchWorkItem?
     private var isApprovalPending = false
 
+    /// Fires if `didConnect` never arrives. See `armConnectWatchdog`.
+    private var connectWatchdog: DispatchWorkItem?
+    private var connectAttempt = 0
+
+    /// True between cancelling a stalled connect and issuing the retry, so the resulting
+    /// disconnect/failToConnect callbacks are not mistaken for a genuine failure.
+    private var isRetryingConnect = false
+
+    /// How long to wait for `didConnect` before assuming the address is stale.
+    ///
+    /// Measured establishment varies a lot — 670 ms to 2130 ms — because the central has to
+    /// catch an advertising event and Low Power mode advertises only once a second. 4 s clears
+    /// the observed worst case with margin; going tighter cancels connections that were about
+    /// to succeed, which is worse than the stall being fixed.
+    private static let connectWatchdogSeconds: TimeInterval = 4.0
+
+    /// Initial attempt plus one retry.
+    private static let maxConnectAttempts = 2
+
+    /// Brief pause after cancelling a hung connect so the stack can clear it.
+    private static let connectRetryDelaySeconds: TimeInterval = 0.3
+
     init(bleCentral: BLECentralManager, pairingManager: PairingManager) {
         self.bleCentral = bleCentral
         self.pairingManager = pairingManager
@@ -109,10 +131,55 @@ final class GATTChallengeClient: NSObject {
             self.bleCentral.connectionDelegate = self
 
             self.scheduleTimeout()
+            self.connectAttempt = 1
             self.log.info("Connecting to \(peripheral.identifier.uuidString, privacy: .public) for GATT authentication")
             EventLogger.shared.info(category: "GATT", "Initiating challenge handshake with \(pairedDevice.name)")
             self.bleCentral.connect(peripheral)
+            self.armConnectWatchdog(for: peripheral)
         }
+    }
+
+    /// Guards against `connect` never completing.
+    ///
+    /// `centralManager.connect` has no timeout by design — it waits forever. Android rotates
+    /// its resolvable private address on every `startAdvertising`, and this app restarts
+    /// advertising after each disconnect, so CoreBluetooth can hold a stale address resolution
+    /// for a peripheral identifier that still looks current. The connect then hangs silently
+    /// and the whole handshake dies on the 8s auth timeout instead of retrying.
+    ///
+    /// Cancelling and reconnecting forces the stack to resolve the address again, which in
+    /// practice succeeds on the second attempt.
+    private func armConnectWatchdog(for peripheral: CBPeripheral) {
+        connectWatchdog?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.activePeripheral === peripheral else { return }
+            guard peripheral.state != .connected else { return }
+
+            guard self.connectAttempt < Self.maxConnectAttempts else {
+                self.log.info("Connect stalled after \(self.connectAttempt) attempts; giving up")
+                EventLogger.shared.warning(
+                    category: "GATT",
+                    "Could not establish a connection (stale peripheral address)"
+                )
+                self.finish(.failure(.connectionFailed(nil)), for: peripheral, disconnect: true)
+                return
+            }
+
+            self.isRetryingConnect = true
+            self.bleCentral.cancelConnection(peripheral)
+
+            self.connectAttempt += 1
+            self.log.info("Connect stalled; retry \(self.connectAttempt) of \(Self.maxConnectAttempts)")
+            EventLogger.shared.info(category: "GATT", "Connection stalled, retrying")
+            self.bleCentral.queue.asyncAfter(deadline: .now() + Self.connectRetryDelaySeconds) { [weak self] in
+                guard let self, self.activePeripheral === peripheral else { return }
+                self.isRetryingConnect = false
+                self.bleCentral.connect(peripheral)
+                self.armConnectWatchdog(for: peripheral)
+            }
+        }
+        connectWatchdog = workItem
+        bleCentral.queue.asyncAfter(deadline: .now() + Self.connectWatchdogSeconds, execute: workItem)
     }
 
     /// Aborts in-flight handshake.
@@ -149,6 +216,10 @@ final class GATTChallengeClient: NSObject {
 
         timeoutWorkItem?.cancel()
         timeoutWorkItem = nil
+        connectWatchdog?.cancel()
+        connectWatchdog = nil
+        connectAttempt = 0
+        isRetryingConnect = false
 
         let pendingCompletion = completion
         activePeripheral = nil
@@ -178,18 +249,24 @@ extension GATTChallengeClient: BLEPeripheralConnectionDelegate {
 
     func bleCentral(_ manager: BLECentralManager, didConnect peripheral: CBPeripheral) {
         guard peripheral === activePeripheral else { return }
+        connectWatchdog?.cancel()
+        connectWatchdog = nil
         log.info("Connected, discovering unlock service")
         peripheral.discoverServices([BLEProtocol.serviceUUID])
     }
 
     func bleCentral(_ manager: BLECentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         guard peripheral === activePeripheral else { return }
+        // Our own watchdog cancellation surfaces here; let the retry proceed.
+        guard !isRetryingConnect else { return }
         EventLogger.shared.error(category: "GATT", "Connection failed: \(error?.localizedDescription ?? "unknown")")
         finish(.failure(.connectionFailed(error)), for: peripheral, disconnect: false)
     }
 
     func bleCentral(_ manager: BLECentralManager, didDisconnect peripheral: CBPeripheral, error: Error?) {
         guard peripheral === activePeripheral else { return }
+        // Cancelling a stalled pending connection reports as a disconnect; not a real failure.
+        guard !isRetryingConnect else { return }
         finish(.failure(.disconnected(error)), for: peripheral, disconnect: false)
     }
 }
