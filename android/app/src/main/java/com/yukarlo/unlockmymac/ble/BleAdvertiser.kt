@@ -82,8 +82,15 @@ class BleAdvertiser(
                         AdvertiseMode.LOW_POWER -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
                         AdvertiseMode.BALANCED -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
                     },
-                ).setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_LOW)
-                .setConnectable(true)
+                ).setTxPowerLevel(
+                    // ADVERTISE_TX_POWER_LOW is -15 dBm, which put a phone on the same desk at
+                    // -85 dBm — too weak for the Mac to hold a GATT connection. MEDIUM is -7 dBm
+                    // and HIGH is +1 dBm; the advertising-mode setting doubles as a range lever.
+                    when (mode) {
+                        AdvertiseMode.LOW_POWER -> AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM
+                        AdvertiseMode.BALANCED -> AdvertiseSettings.ADVERTISE_TX_POWER_HIGH
+                    },
+                ).setConnectable(true)
                 .setTimeout(0)
                 .build()
 
