@@ -83,8 +83,17 @@ final class PresenceStateMachine: ObservableObject {
     /// (Android rotates its address constantly), so retrying quickly is the right behaviour.
     private let transportBackoffSeconds: TimeInterval = 3
 
+    /// Set when the user denied the last request, so we wait rather than re-prompting.
+    private var lastFailureWasDenial = false
+
+    /// Backoff after an explicit "no". Long on purpose: the user said no, and each retry raises
+    /// a fresh notification on their phone. Cleared when the screen locks again, so the next
+    /// lock session starts fresh rather than inheriting the refusal.
+    private let deniedBackoffSeconds: TimeInterval = 120
+
     private var currentBackoffSeconds: TimeInterval {
-        lastFailureWasTransport ? transportBackoffSeconds : authBackoffSeconds
+        if lastFailureWasDenial { return deniedBackoffSeconds }
+        return lastFailureWasTransport ? transportBackoffSeconds : authBackoffSeconds
     }
     private var heartbeatTimer: Timer?
     private var absenceTimer: Timer?
@@ -171,6 +180,7 @@ final class PresenceStateMachine: ObservableObject {
             guard self.systemActionController.isScreenLocked else { return }
             self.lastAuthFailureDate = nil
             self.lastFailureWasTransport = false
+            self.lastFailureWasDenial = false
             self.authenticatedPeripheralId = nil
             if self.currentState != .absent {
                 self.transitionTo(.absent)
@@ -227,6 +237,9 @@ final class PresenceStateMachine: ObservableObject {
         resetAbsenceTimer()
         authenticatedPeripheralId = nil
         lastAuthFailureDate = nil
+        lastFailureWasTransport = false
+        // A refusal applies to the lock session it was given in, not the next one.
+        lastFailureWasDenial = false
         lastHeartbeatAuthDate = nil
         transitionTo(.absent)
     }
@@ -348,6 +361,7 @@ final class PresenceStateMachine: ObservableObject {
             case .failure(let error):
                 self.lastAuthFailureDate = Date()
                 self.lastFailureWasTransport = error.isTransportLevel
+                self.lastFailureWasDenial = error.isDenial
                 EventLogger.shared.error(category: "Auth", "Authentication failed: \(error.description)")
                 self.transitionTo(.absent)
             }

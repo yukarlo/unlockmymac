@@ -19,6 +19,15 @@ enum GATTChallengeError: Error, CustomStringConvertible {
     case invalidSignature
     case missingPairingData
 
+    /// The user tapped Deny on the phone. A decision, not a fault — do not retry promptly.
+    case deniedByUser
+
+    /// The user explicitly refused. Warrants a long backoff, not a prompt retry.
+    var isDenial: Bool {
+        if case .deniedByUser = self { return true }
+        return false
+    }
+
     /// True for link-level problems that say nothing about the peer's identity.
     ///
     /// These are routine — Android rotates its private address on every `startAdvertising`, so
@@ -33,7 +42,10 @@ enum GATTChallengeError: Error, CustomStringConvertible {
             return true
         // `sessionAlreadyInProgress` is not a failure at all — the caller treats it as a no-op
         // before it reaches any backoff. Listed here only so this switch stays exhaustive.
-        case .sessionAlreadyInProgress,
+        // `sessionAlreadyInProgress` is not a failure at all — the caller treats it as a no-op
+        // before it reaches any backoff. `deniedByUser` is a deliberate decision and must not
+        // get the short retry, or denying produces a fresh prompt seconds later.
+        case .sessionAlreadyInProgress, .deniedByUser,
              .randomBytesUnavailable, .invalidSignature, .missingPairingData:
             return false
         }
@@ -69,6 +81,8 @@ enum GATTChallengeError: Error, CustomStringConvertible {
             return "Cryptographic signature verification failed"
         case .missingPairingData:
             return "No paired Android device key available for verification"
+        case .deniedByUser:
+            return "Unlock denied on the phone"
         }
     }
 }
@@ -380,6 +394,15 @@ extension GATTChallengeClient: CBPeripheralDelegate {
                     guard let self, self.activePeripheral === peripheral else { return }
                     peripheral.readValue(for: characteristic)
                 }
+                return
+            }
+
+            // 0x82 (130) is DENIED — the user tapped Deny. Distinct from the opaque 0x81 so we
+            // can back off properly instead of re-challenging and raising another prompt.
+            if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 130 {
+                log.info("Android returned 0x82 DENIED — user refused this unlock")
+                EventLogger.shared.warning(category: "GATT", "Unlock denied on the phone")
+                finish(.failure(.deniedByUser), for: peripheral, disconnect: true)
                 return
             }
 
