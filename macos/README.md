@@ -94,6 +94,26 @@ Build & run (⌘R) from Xcode. On first launch, macOS will prompt for Bluetooth 
   notifications, with a 30 s floor as a backstop.
 - **GATT status `0x80`** from the phone means "waiting for the user to approve"; retry within the
   auth timeout rather than treating it as a read failure.
+- **Re-arm the scan after a system wake.** CoreBluetooth does not scan while the Mac is asleep
+  and nothing restarts it on wake. `updateScanMode` cannot cover this — it is deliberately
+  idempotent and only runs on a state transition, which itself needs a discovery. Without the
+  `NSWorkspace.didWakeNotification` observer the app stays deaf after every sleep.
+
+## Limitation: sleep defeats unlock-on-approach
+
+While the Mac is asleep it cannot scan, so it cannot see the phone at all. Check your policy:
+
+```sh
+pmset -g custom | grep -E "Power:|sleep"
+```
+
+A short `sleep` value on Battery Power (1–5 minutes is common) means that after a brief absence
+the Mac is already asleep, and returning is a **wake-then-unlock** flow: tap the trackpad or open
+the lid, then the unlock lands about 2–4 seconds later. On AC with `sleep 0` the Mac stays awake
+and unlock is genuinely hands-free.
+
+This is macOS power management, not a bug in either app. If you want hands-free return on
+battery, extend the window (`sudo pmset -b sleep 15`) and accept the battery cost.
 
 ## Security notes
 
