@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature
             android:name="android.hardware.bluetooth_le"
@@ -17,6 +18,15 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Used only by the pairing screen to scan the Mac's QR code. -->
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Restart the peripheral after a reboot or an app update. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Lets the app send the user to the Doze exemption prompt. Aggressive OEM battery
+         managers otherwise kill the foreground service after minutes to hours, which reads
+         as "my Mac randomly stopped unlocking". Play Store policy restricts this permission;
+         this is a personal sideloaded build. -->
+    <uses-permission
+            android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+            tools:ignore="BatteryLife"/>
 
     <application
             android:name=".UnlockMyMacApp"
@@ -47,6 +57,18 @@
         <receiver
                 android:name=".service.ApprovalActionReceiver"
                 android:exported="false"/>
+
+        <!-- exported=true is required to receive these system broadcasts. Both are protected
+             actions that only the system can send, so this is not an open entry point. -->
+        <receiver
+                android:name=".service.BootReceiver"
+                android:enabled="true"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
