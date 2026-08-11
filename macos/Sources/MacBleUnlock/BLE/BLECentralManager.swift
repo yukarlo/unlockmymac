@@ -68,6 +68,9 @@ final class BLECentralManager: NSObject, ObservableObject {
     /// automatically once the adapter reaches `.poweredOn` if this is true.
     private var wantsScanning = false
 
+    /// Options the current scan was started with, so `updateScanMode` can no-op when unchanged.
+    private var activeAllowDuplicates: Bool?
+
     override init() {
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: queue)
@@ -91,6 +94,7 @@ final class BLECentralManager: NSObject, ObservableObject {
             if self.centralManager.isScanning {
                 self.centralManager.stopScan()
             }
+            self.activeAllowDuplicates = nil
             DispatchQueue.main.async { [weak self] in
                 self?.isScanning = false
             }
@@ -115,13 +119,23 @@ final class BLECentralManager: NSObject, ObservableObject {
         }
     }
 
-    /// Adjusts scanning mode (e.g. enabling allowDuplicates for near-field discovery, or disabling for battery savings when unlocked).
+    /// Adjusts scanning mode, but only when the mode actually changes.
+    ///
+    /// This must be idempotent. `stopScan()` followed by `scanForPeripherals()` aborts an
+    /// in-flight connection, and the presence state machine calls this on every transition —
+    /// including `.connecting` and `.authenticating`, which land in the middle of connection
+    /// establishment. Restarting the scan there means the connection never completes and the
+    /// handshake dies on its 8s timeout, every time.
     func updateScanMode(allowDuplicates: Bool) {
         queue.async { [weak self] in
             guard let self, self.wantsScanning, self.centralManager.state == .poweredOn else { return }
+            if self.centralManager.isScanning, self.activeAllowDuplicates == allowDuplicates {
+                return
+            }
             if self.centralManager.isScanning {
                 self.centralManager.stopScan()
             }
+            self.activeAllowDuplicates = allowDuplicates
             self.centralManager.scanForPeripherals(
                 withServices: [BLEProtocol.serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates]
@@ -135,6 +149,7 @@ final class BLECentralManager: NSObject, ObservableObject {
             guard let self, self.wantsScanning, self.centralManager.state == .poweredOn else { return }
             guard !self.centralManager.isScanning else { return }
 
+            self.activeAllowDuplicates = true
             self.centralManager.scanForPeripherals(
                 withServices: [BLEProtocol.serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
@@ -198,6 +213,10 @@ extension BLECentralManager: CBCentralManagerDelegate {
 
         if mapped == .poweredOn {
             startScanningIfReady()
+        } else {
+            // The stack drops the scan when the adapter leaves poweredOn; forget the mode so
+            // the next start actually issues a fresh scanForPeripherals.
+            queue.async { [weak self] in self?.activeAllowDuplicates = nil }
         }
     }
 
