@@ -63,13 +63,16 @@ object UnlockNotifications {
     fun approvalRequest(
         context: Context,
         challengeId: Long,
-        challengeTag: String,
-    ): Notification =
-        NotificationCompat
+        macName: String?,
+    ): Notification {
+        val title =
+            macName?.let { context.getString(R.string.notification_approval_title_mac, it) }
+                ?: context.getString(R.string.notification_approval_title)
+        return NotificationCompat
             .Builder(context, APPROVAL_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle(context.getString(R.string.notification_approval_title))
-            .setContentText(context.getString(R.string.notification_approval_text, challengeTag))
+            .setContentTitle(title)
+            .setContentText(context.getString(R.string.notification_approval_text))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
@@ -83,6 +86,7 @@ object UnlockNotifications {
                 context.getString(R.string.action_approve),
                 approvalAction(context, challengeId, approved = true),
             ).build()
+    }
 
     fun cancelApproval(context: Context) {
         NotificationManagerCompat.from(context).cancel(APPROVAL_NOTIFICATION_ID)

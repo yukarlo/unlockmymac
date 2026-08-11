@@ -114,9 +114,12 @@ fun HomeScreen(
             }
 
             state.status.pendingApproval?.let { approval ->
-                SectionCard(title = stringResource(R.string.home_approval_title)) {
+                val title =
+                    state.pairedMac?.name?.let { stringResource(R.string.home_approval_title_mac, it) }
+                        ?: stringResource(R.string.home_approval_title)
+                SectionCard(title = title) {
                     Text(
-                        text = stringResource(R.string.home_approval_body, approval.challengeTag),
+                        text = stringResource(R.string.home_approval_body),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -225,8 +228,8 @@ private fun describeAdvertising(state: AdvertisingState): String =
     when (state) {
         AdvertisingState.STOPPED -> "Stopped"
         AdvertisingState.STARTING -> "Starting"
-        AdvertisingState.ADVERTISING -> "Advertising"
-        AdvertisingState.PAUSED_CONNECTED -> "Connected (advertising paused)"
+        AdvertisingState.ADVERTISING -> "Broadcasting"
+        AdvertisingState.PAUSED_CONNECTED -> "Connected (broadcasting paused)"
         AdvertisingState.FAILED -> "Failed"
         AdvertisingState.BLUETOOTH_OFF -> "Bluetooth off"
         AdvertisingState.NO_PERMISSION -> "No permission"

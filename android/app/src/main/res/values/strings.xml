@@ -2,7 +2,7 @@
     <string name="app_name">UnlockMyMac</string>
 
     <!-- Notifications -->
-    <string name="channel_ongoing">BLE peripheral</string>
+    <string name="channel_ongoing">BLE background service</string>
     <string name="channel_ongoing_desc">Shown while the phone is discoverable by your Mac.</string>
     <string name="channel_approval">Unlock approvals</string>
     <string name="channel_approval_desc">Asks you to approve each unlock request.</string>
@@ -12,42 +12,44 @@
     <string name="notification_paused">Paused</string>
     <string name="notification_disabled">Disabled</string>
     <string name="notification_error">Could not start Bluetooth</string>
-    <string name="notification_approval_title">Unlock request</string>
-    <string name="notification_approval_text">Your Mac wants to authenticate (challenge %1$s)</string>
+    <string name="notification_approval_title">Unlock Request</string>
+    <string name="notification_approval_title_mac">Unlock %1$s?</string>
+    <string name="notification_approval_text">Tap Approve to unlock this Mac.</string>
     <string name="action_approve">Approve</string>
     <string name="action_deny">Deny</string>
 
     <!-- Home -->
     <string name="home_title">Mac unlock</string>
     <string name="home_service_switch">Discoverable by Mac</string>
-    <string name="home_service_switch_desc">Advertise and answer challenges from your paired Mac.</string>
+    <string name="home_service_switch_desc">Broadcast signal and authenticate requests from your paired Mac.</string>
     <string name="home_pause">Pause</string>
-    <string name="home_pause_desc">Stop advertising without forgetting the pairing.</string>
+    <string name="home_pause_desc">Stop broadcasting without forgetting the pairing.</string>
     <string name="home_require_approval">Approve every request</string>
-    <string name="home_require_approval_desc">Hold each challenge until you tap Approve. Blocks unattended unlocks.</string>
-    <string name="home_advertise_balanced">Balanced advertising</string>
-    <string name="home_advertise_balanced_desc">Faster discovery, more battery. Try this if your Mac is slow to find the phone.</string>
+    <string name="home_require_approval_desc">Hold each unlock request until you tap Approve. Blocks unattended unlocks.</string>
+    <string name="home_advertise_balanced">Fast discovery mode</string>
+    <string name="home_advertise_balanced_desc">Broadcasts more frequently to detect your phone faster. Uses slightly more battery.</string>
     <string name="home_status">Status</string>
     <string name="home_status_bluetooth">Bluetooth</string>
-    <string name="home_status_advertising">Advertising</string>
+    <string name="home_status_advertising">Broadcasting</string>
     <string name="home_status_paired">Paired Mac</string>
-    <string name="home_status_connected">Connected centrals</string>
-    <string name="home_status_last_challenge">Last challenge</string>
+    <string name="home_status_connected">Connected Mac</string>
+    <string name="home_status_last_challenge">Last request</string>
     <string name="home_status_last_auth">Last result</string>
     <string name="home_not_paired">Not paired</string>
     <string name="home_never">Never</string>
     <string name="home_pair_button">Pair with a Mac</string>
     <string name="home_repair_button">Pair with a different Mac</string>
     <string name="home_diagnostics_button">Diagnostics</string>
-    <string name="home_permissions_body">UnlockMyMac needs Nearby devices permission to advertise as a Bluetooth peripheral. It never scans for other devices and never uses your location.</string>
+    <string name="home_permissions_body">UnlockMyMac needs Nearby devices permission to broadcast as a Bluetooth peripheral. It never scans for other devices and never uses your location.</string>
     <string name="home_permissions_grant">Grant permission</string>
     <string name="home_permissions_settings">Open settings</string>
     <string name="home_bluetooth_off">Bluetooth is off. Turn it on to become discoverable.</string>
     <string name="home_battery_body">Battery optimisation is on for this app. Android may stop the service after a while, and your Mac will quietly stop unlocking. Allow unrestricted background use to keep it running.</string>
     <string name="home_battery_allow">Allow unrestricted</string>
     <string name="home_battery_samsung">On Samsung, also remove this app from Settings › Battery › Background usage limits › Sleeping apps.</string>
-    <string name="home_approval_title">Unlock request waiting</string>
-    <string name="home_approval_body">Challenge %1$s from your Mac.</string>
+    <string name="home_approval_title">Unlock Request</string>
+    <string name="home_approval_title_mac">Unlock %1$s?</string>
+    <string name="home_approval_body">This Mac is requesting permission to unlock.</string>
 
     <!-- Pairing -->
     <string name="pairing_title">Pair with a Mac</string>

@@ -171,6 +171,7 @@ class GattServerController(
             status.recordAuth(AuthOutcome.DENIED, tag, "Denied by user")
         }
         status.setPendingApproval(null)
+        listener.onApprovalNoLongerValid()
     }
 
     private val callback =

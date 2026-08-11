@@ -189,7 +189,7 @@ class BleUnlockService :
         }
         NotificationManagerCompat.from(this).notify(
             UnlockNotifications.APPROVAL_NOTIFICATION_ID,
-            UnlockNotifications.approvalRequest(this, pending.id, tag),
+            UnlockNotifications.approvalRequest(this, pending.id, pairedMacName),
         )
     }
 
