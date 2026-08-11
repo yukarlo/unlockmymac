@@ -43,6 +43,9 @@
     <string name="home_permissions_grant">Grant permission</string>
     <string name="home_permissions_settings">Open settings</string>
     <string name="home_bluetooth_off">Bluetooth is off. Turn it on to become discoverable.</string>
+    <string name="home_battery_body">Battery optimisation is on for this app. Android may stop the service after a while, and your Mac will quietly stop unlocking. Allow unrestricted background use to keep it running.</string>
+    <string name="home_battery_allow">Allow unrestricted</string>
+    <string name="home_battery_samsung">On Samsung, also remove this app from Settings › Battery › Background usage limits › Sleeping apps.</string>
     <string name="home_approval_title">Unlock request waiting</string>
     <string name="home_approval_body">Challenge %1$s from your Mac.</string>
 

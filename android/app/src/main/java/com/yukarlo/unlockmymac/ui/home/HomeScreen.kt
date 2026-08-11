@@ -99,6 +99,20 @@ fun HomeScreen(
                 WarningCard(text = stringResource(R.string.home_bluetooth_off))
             }
 
+            // Shown independently of the Bluetooth warnings: the service can be perfectly
+            // configured and still be killed by the OEM battery manager.
+            if (state.hasBlePermission && !state.batteryExempt) {
+                WarningCard(text = stringResource(R.string.home_battery_body)) {
+                    Text(
+                        text = stringResource(R.string.home_battery_samsung),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(onClick = viewModel::requestBatteryExemption) {
+                        Text(stringResource(R.string.home_battery_allow))
+                    }
+                }
+            }
+
             state.status.pendingApproval?.let { approval ->
                 SectionCard(title = stringResource(R.string.home_approval_title)) {
                     Text(

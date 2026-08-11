@@ -9,6 +9,7 @@ import com.yukarlo.unlockmymac.data.AdvertiseMode
 import com.yukarlo.unlockmymac.data.AppSettings
 import com.yukarlo.unlockmymac.data.BleStatus
 import com.yukarlo.unlockmymac.data.PairedMac
+import com.yukarlo.unlockmymac.permissions.BatteryOptimization
 import com.yukarlo.unlockmymac.permissions.BlePermissions
 import com.yukarlo.unlockmymac.service.BleUnlockService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +27,8 @@ class HomeUiState(
     val pairedMac: PairedMac?,
     val hasBlePermission: Boolean,
     val bluetoothOn: Boolean,
+    /** False means an OEM battery manager may kill the service without warning. */
+    val batteryExempt: Boolean,
 )
 
 class HomeViewModel(
@@ -36,21 +39,41 @@ class HomeViewModel(
 
     private val permissionGranted = MutableStateFlow(BlePermissions.hasBleAccess(application))
     private val bluetoothOn = MutableStateFlow(isBluetoothOn())
+    private val batteryExempt = MutableStateFlow(BatteryOptimization.isExempt(application))
+
+    /** Device-level signals, folded together because `combine` only types up to five flows. */
+    private val environment =
+        combine(permissionGranted, bluetoothOn, batteryExempt) { granted, btOn, exempt ->
+            Environment(granted, btOn, exempt)
+        }
 
     val uiState: StateFlow<HomeUiState> =
         combine(
             container.settings.settings,
             container.status.status,
             container.pairing.pairedMac,
-            permissionGranted,
-            bluetoothOn,
-        ) { settings, status, paired, granted, btOn ->
-            HomeUiState(settings, status, paired, granted, btOn)
+            environment,
+        ) { settings, status, paired, env ->
+            HomeUiState(settings, status, paired, env.hasBlePermission, env.bluetoothOn, env.batteryExempt)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = HomeUiState(null, BleStatus(), null, permissionGranted.value, bluetoothOn.value),
+            initialValue =
+                HomeUiState(
+                    settings = null,
+                    status = BleStatus(),
+                    pairedMac = null,
+                    hasBlePermission = permissionGranted.value,
+                    bluetoothOn = bluetoothOn.value,
+                    batteryExempt = batteryExempt.value,
+                ),
         )
+
+    private class Environment(
+        val hasBlePermission: Boolean,
+        val bluetoothOn: Boolean,
+        val batteryExempt: Boolean,
+    )
 
     private val _permissionDenied = MutableStateFlow(false)
     val permissionDenied: StateFlow<Boolean> = _permissionDenied.asStateFlow()
@@ -59,7 +82,17 @@ class HomeViewModel(
     fun refreshEnvironment() {
         permissionGranted.value = BlePermissions.hasBleAccess(app)
         bluetoothOn.value = isBluetoothOn()
+        batteryExempt.value = BatteryOptimization.isExempt(app)
         reconcileServiceState()
+    }
+
+    /** Opens the system Doze-exemption prompt. Only the user can actually grant it. */
+    fun requestBatteryExemption() {
+        runCatching { app.startActivity(BatteryOptimization.requestExemptionIntent(app.packageName)) }
+            .onFailure {
+                // Some OEM builds hide the direct prompt; fall back to the app settings page.
+                runCatching { app.startActivity(BatteryOptimization.appSettingsIntent(app.packageName)) }
+            }
     }
 
     /**
