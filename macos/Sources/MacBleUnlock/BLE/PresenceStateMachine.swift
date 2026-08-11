@@ -28,9 +28,37 @@ final class PresenceStateMachine: ObservableObject {
     }
 
     /// User-adjustable RSSI thresholds (defaults from Section 8).
-    @Published var nearRSSIThreshold: Double = Double(BLEProtocol.nearRSSIThresholdDBm)
-    @Published var farRSSIThreshold: Double = Double(BLEProtocol.farRSSIThresholdDBm)
-    @Published var absenceTimeoutSeconds: TimeInterval = 30
+    ///
+    /// Persisted: these are per-desk calibration values, and silently resetting them to the
+    /// defaults on every launch means the app stops seeing the phone until the user notices
+    /// and recalibrates.
+    @Published var nearRSSIThreshold: Double = Defaults.near {
+        didSet { UserDefaults.standard.set(nearRSSIThreshold, forKey: Defaults.nearKey) }
+    }
+    @Published var farRSSIThreshold: Double = Defaults.far {
+        didSet { UserDefaults.standard.set(farRSSIThreshold, forKey: Defaults.farKey) }
+    }
+    @Published var absenceTimeoutSeconds: TimeInterval = Defaults.absence {
+        didSet { UserDefaults.standard.set(absenceTimeoutSeconds, forKey: Defaults.absenceKey) }
+    }
+
+    private enum Defaults {
+        static let nearKey = "com.karloyu.macbleunlock.nearRSSIThreshold"
+        static let farKey = "com.karloyu.macbleunlock.farRSSIThreshold"
+        static let absenceKey = "com.karloyu.macbleunlock.absenceTimeoutSeconds"
+
+        static var near: Double {
+            UserDefaults.standard.object(forKey: nearKey) as? Double
+                ?? Double(BLEProtocol.nearRSSIThresholdDBm)
+        }
+        static var far: Double {
+            UserDefaults.standard.object(forKey: farKey) as? Double
+                ?? Double(BLEProtocol.farRSSIThresholdDBm)
+        }
+        static var absence: TimeInterval {
+            UserDefaults.standard.object(forKey: absenceKey) as? Double ?? 30
+        }
+    }
 
     private let bleCentral: BLECentralManager
     private let gattClient: GATTChallengeClient
@@ -82,11 +110,14 @@ final class PresenceStateMachine: ObservableObject {
                 if self.currentState == .unlockCooldown || self.currentState == .authenticatedNear {
                     EventLogger.shared.info(category: "State", "Screen locked while phone is nearby. Re-authenticating for auto-unlock...")
                     self.transitionTo(.candidateNear)
-                    let targetPeripheral = self.authenticatedPeripheralId.flatMap { self.bleCentral.discoveredPeripherals[$0]?.peripheral }
-                        ?? self.bleCentral.discoveredPeripherals.values.first?.peripheral
-
-                    if let targetPeripheral, let paired = self.pairingManager.pairedDevice {
-                        self.startHandshake(peripheral: targetPeripheral, paired: paired)
+                    if let target = self.currentTarget(), let paired = self.pairingManager.pairedDevice {
+                        self.startHandshake(peripheral: target.peripheral, paired: paired)
+                    } else {
+                        EventLogger.shared.warning(
+                            category: "State",
+                            "Screen locked but no freshly advertising phone to re-authenticate"
+                        )
+                        self.transitionTo(.absent)
                     }
                 }
             }
@@ -150,6 +181,31 @@ final class PresenceStateMachine: ObservableObject {
                 handleMissingPeripheral()
             }
         }
+    }
+
+    /// The peripheral we should talk to right now.
+    ///
+    /// Android mints a new resolvable private address on every `startAdvertising`, and it
+    /// restarts advertising after each disconnect — so a peripheral identifier is only valid
+    /// for as long as advertisements keep arriving under it. Connecting to a rotated-away
+    /// address does not fail fast; CoreBluetooth simply never completes, so the handshake dies
+    /// on its 8s timeout instead. Requiring a recent `lastSeenAt` avoids that entirely.
+    ///
+    /// Falling back to the strongest fresh candidate is safe: the address is never identity
+    /// here, the signature is. It also replaces an arbitrary `Dictionary.first`.
+    private func currentTarget(freshWithin: TimeInterval = 5) -> DiscoveredPeripheral? {
+        let peripherals = bleCentral.discoveredPeripherals
+        let cutoff = Date().addingTimeInterval(-freshWithin)
+
+        if let id = authenticatedPeripheralId {
+            if let entry = peripherals[id], entry.lastSeenAt > cutoff { return entry }
+            // Address rotated: drop the pin so we re-acquire under the new identifier.
+            authenticatedPeripheralId = nil
+        }
+
+        return peripherals.values
+            .filter { $0.lastSeenAt > cutoff && ($0.averageRSSI ?? -200) >= nearRSSIThreshold }
+            .max { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }
     }
 
     private func startHandshake(peripheral: CBPeripheral, paired: PairedDevice) {
@@ -236,7 +292,7 @@ final class PresenceStateMachine: ObservableObject {
         heartbeatTimer?.invalidate()
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             guard let self, self.currentState == .unlockCooldown, let paired = self.pairingManager.pairedDevice else { return }
-            if let targetId = self.authenticatedPeripheralId, let entry = self.bleCentral.discoveredPeripherals[targetId] {
+            if let entry = self.currentTarget() {
                 self.gattClient.authenticate(
                     peripheral: entry.peripheral,
                     macInstallationId: self.pairingManager.macInstallationId,
