@@ -206,8 +206,8 @@ final class AutoUnlockController: ObservableObject {
     /// Backstop in case the unlock notification is missed.
     private static let minRetryInterval: TimeInterval = 30
 
-    /// Gap between synthesised keystrokes.
-    private static let keystrokeIntervalMicros: UInt32 = 25_000
+    /// Gap between synthesised keystrokes (8ms for fast typing without dropping keys).
+    private static let keystrokeIntervalMicros: UInt32 = 8_000
 
     init() {
         self.isEnabled = UserDefaults.standard.bool(forKey: enabledKey)
@@ -287,24 +287,21 @@ final class AutoUnlockController: ObservableObject {
 
             // Step 1: Send Escape to wake display & clear screen saver / clock without inserting text
             self.postVirtualKey(Self.keyEscape)
-            usleep(250_000)
+            usleep(80_000)
 
-            // Step 2: Clear anything in the password field (Cmd+A with physical Cmd key, then 5 Delete keypresses)
+            // Step 2: Clear anything in the password field (Cmd+A with physical Cmd key, then Delete)
             self.postVirtualKey(Self.keyA, flags: .maskCommand)
-            usleep(60_000)
-            for _ in 0..<5 {
-                self.postVirtualKey(Self.keyDelete)
-                usleep(20_000)
-            }
-            usleep(100_000)
+            usleep(30_000)
+            self.postVirtualKey(Self.keyDelete)
+            usleep(40_000)
 
             // Step 3: Type password characters using physical CGKeyCodes & explicit Shift modifier events
             self.postPassword(password)
-            usleep(150_000)
+            usleep(40_000)
 
             // Step 4: Submit password via Return key
             self.postVirtualKey(Self.keyReturn)
-            usleep(100_000)
+            usleep(40_000)
 
             DispatchQueue.main.async {
                 self.hasAttemptedThisLockSession = true
