@@ -6,11 +6,11 @@ import os
 
 /// Presence state machine states per Section 6.3 of the implementation plan.
 enum PresenceState: String, CustomStringConvertible {
-    case absent = "Absent"
-    case candidateNear = "Candidate Near"
-    case connecting = "Connecting"
-    case authenticating = "Authenticating"
-    case authenticatedNear = "Authenticated (Near)"
+    case absent = "Phone Away"
+    case candidateNear = "Phone Nearby"
+    case connecting = "Connecting to Phone…"
+    case authenticating = "Authenticating…"
+    case authenticatedNear = "Phone Authenticated"
     case unlockCooldown = "Unlock Cooldown"
 
     var description: String { rawValue }

@@ -20,6 +20,9 @@ struct SettingsView: View {
                             .bold()
                     }
                     Slider(value: $stateMachine.nearRSSIThreshold, in: -90...(-40), step: 1)
+                    Text("The Bluetooth signal strength required to trigger auto-unlock. Higher values (closer to -40 dBm) require the phone to be closer to your Mac.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
 
                     // The Far Threshold slider is gone: it only drove proximity auto-lock, which
                     // has been removed. The Mac now scans solely while locked, and relies on

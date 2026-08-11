@@ -183,7 +183,7 @@ final class StatusMenuController: NSObject {
 
     @objc private func showDiagnosticsWindow() {
         if diagnosticsWindowController == nil {
-            diagnosticsWindowController = DiagnosticsWindowController(stateMachine: stateMachine, bleCentral: bleCentral)
+            diagnosticsWindowController = DiagnosticsWindowController(stateMachine: stateMachine, bleCentral: bleCentral, pairingManager: pairingManager)
         }
         diagnosticsWindowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)

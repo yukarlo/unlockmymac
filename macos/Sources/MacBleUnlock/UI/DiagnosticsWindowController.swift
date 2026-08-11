@@ -5,6 +5,7 @@ struct DiagnosticsView: View {
     @ObservedObject var logger = EventLogger.shared
     @ObservedObject var stateMachine: PresenceStateMachine
     @ObservedObject var bleCentral: BLECentralManager
+    @ObservedObject var pairingManager: PairingManager
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -22,7 +23,7 @@ struct DiagnosticsView: View {
                 Divider().frame(height: 30)
 
                 VStack(alignment: .leading) {
-                    Text("Adapter")
+                    Text("Bluetooth")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Text(bleCentral.adapterState.rawValue)
@@ -32,10 +33,10 @@ struct DiagnosticsView: View {
                 Divider().frame(height: 30)
 
                 VStack(alignment: .leading) {
-                    Text("Discovered Devices")
+                    Text("Paired Device")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("\(bleCentral.discoveredPeripherals.count)")
+                    Text(pairingManager.pairedDevice?.name ?? "None")
                         .font(.headline)
                 }
 
@@ -73,7 +74,7 @@ struct DiagnosticsView: View {
             .listStyle(.inset)
         }
         .padding()
-        .frame(width: 580, height: 420)
+        .frame(minWidth: 580, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
     }
 
     private var stateColor: Color {
@@ -95,8 +96,8 @@ struct DiagnosticsView: View {
 }
 
 final class DiagnosticsWindowController: NSWindowController {
-    convenience init(stateMachine: PresenceStateMachine, bleCentral: BLECentralManager) {
-        let hostingView = NSHostingView(rootView: DiagnosticsView(stateMachine: stateMachine, bleCentral: bleCentral))
+    convenience init(stateMachine: PresenceStateMachine, bleCentral: BLECentralManager, pairingManager: PairingManager) {
+        let hostingView = NSHostingView(rootView: DiagnosticsView(stateMachine: stateMachine, bleCentral: bleCentral, pairingManager: pairingManager))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 580, height: 420),
             styleMask: [.titled, .closable, .resizable],

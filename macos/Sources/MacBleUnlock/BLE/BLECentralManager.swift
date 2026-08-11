@@ -34,7 +34,12 @@ struct DiscoveredPeripheral: Equatable {
 final class BLECentralManager: NSObject, ObservableObject {
 
     enum AdapterState: String {
-        case unknown, resetting, unsupported, unauthorized, poweredOff, poweredOn
+        case unknown = "Initializing…"
+        case resetting = "Resetting…"
+        case unsupported = "Unsupported"
+        case unauthorized = "Unauthorized"
+        case poweredOff = "Powered Off"
+        case poweredOn = "Powered On"
     }
 
     /// Current Bluetooth adapter/authorization state, mirrored to the main thread.
