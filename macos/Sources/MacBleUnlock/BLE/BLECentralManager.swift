@@ -140,6 +140,18 @@ final class BLECentralManager: NSObject, ObservableObject {
         startStaleSweepTimer()
     }
 
+    /// Drops a peripheral known to be dead — a connect that exhausted its watchdog retries.
+    ///
+    /// Without this, a rotated-away address stays selectable for the whole `staleTimeout` and
+    /// gets picked again on the next attempt, stalling for the full watchdog budget each time.
+    func forget(peripheralId: UUID) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.discoveredPeripherals[peripheralId] != nil else { return }
+            self.discoveredPeripherals.removeValue(forKey: peripheralId)
+            self.log.info("Forgot unreachable peripheral \(peripheralId.uuidString, privacy: .public)")
+        }
+    }
+
     /// Unconditionally tears the scan down and starts it again.
     ///
     /// Distinct from `updateScanMode`, which must stay idempotent. Use only when the scan is

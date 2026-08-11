@@ -232,6 +232,9 @@ final class PresenceStateMachine: ObservableObject {
     /// Screen unlocked: shut the radio down and forget everything.
     private func stopScanningWhileUnlocked() {
         EventLogger.shared.info(category: "State", "Screen unlocked — stopping BLE until next lock")
+        // Stopping the scan does not touch an in-flight connection, so without this the old
+        // handshake keeps retrying and logging failures after we have supposedly shut down.
+        if gattClient.isBusy { gattClient.cancel() }
         bleCentral.stop()
         stopHeartbeatTimer()
         resetAbsenceTimer()
@@ -255,7 +258,7 @@ final class PresenceStateMachine: ObservableObject {
         // Same freshness-aware selection the heartbeat and lock paths use. Picking an entry
         // without checking `lastSeenAt` can latch a rotated-away address, and connecting to a
         // dead address stalls for the full watchdog budget instead of failing fast.
-        guard let entry = currentTarget(), let averageRSSI = entry.averageRSSI else {
+        guard let entry = presenceTarget(), let averageRSSI = entry.averageRSSI else {
             handleMissingPeripheral()
             return
         }
@@ -275,9 +278,12 @@ final class PresenceStateMachine: ObservableObject {
             if gattClient.isBusy { return }
 
             if averageRSSI >= nearRSSIThreshold {
+                // `entry` answered "is the phone here?"; connecting needs the live handle,
+                // which is the most recently heard one, not necessarily the strongest.
+                guard let target = connectTarget() else { return }
                 EventLogger.shared.info(category: "State", "Discovered candidate phone nearby (\(String(format: "%.1f", averageRSSI)) dBm)")
                 transitionTo(.candidateNear)
-                startHandshake(peripheral: entry.peripheral, paired: paired)
+                startHandshake(peripheral: target.peripheral, paired: paired)
             }
 
         case .candidateNear, .connecting, .authenticating:
@@ -289,7 +295,7 @@ final class PresenceStateMachine: ObservableObject {
 
         case .unlockCooldown:
             // Nothing to do while the phone remains visible. Presence loss is handled above by
-            // `currentTarget()` returning nil, not by an RSSI threshold — there is no longer a
+            // `presenceTarget()` returning nil, not by an RSSI threshold — there is no longer a
             // lock action to trigger, so a "far" band buys nothing and only added a second way
             // to mistake bursty reception for departure.
             break
@@ -306,19 +312,36 @@ final class PresenceStateMachine: ObservableObject {
     ///
     /// Falling back to the strongest fresh candidate is safe: the address is never identity
     /// here, the signature is. It also replaces an arbitrary `Dictionary.first`.
-    private func currentTarget(freshWithin: TimeInterval = presenceFreshnessSeconds) -> DiscoveredPeripheral? {
+    /// "Is the phone here?" — the strongest recent signal.
+    ///
+    /// Signal strength is the right proxy for proximity, so this drives presence and absence.
+    private func presenceTarget() -> DiscoveredPeripheral? {
+        candidates().max { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }
+    }
+
+    /// "Which handle is still alive?" — the most recently seen.
+    ///
+    /// Android mints a new private address on every `startAdvertising`, so one phone can occupy
+    /// several entries at once. Recency predicts which of them still exists; RSSI does not — a
+    /// rotated-away address keeps whatever strength it was last heard at, and picking by
+    /// strength happily selects a dead handle, which then stalls for the whole watchdog budget.
+    private func connectTarget() -> DiscoveredPeripheral? {
+        candidates().max { $0.lastSeenAt < $1.lastSeenAt }
+    }
+
+    /// Entries recent enough and strong enough to be this phone, honouring an existing pin.
+    private func candidates() -> [DiscoveredPeripheral] {
         let peripherals = bleCentral.discoveredPeripherals
-        let cutoff = Date().addingTimeInterval(-freshWithin)
+        let cutoff = Date().addingTimeInterval(-Self.presenceFreshnessSeconds)
 
         if let id = authenticatedPeripheralId {
-            if let entry = peripherals[id], entry.lastSeenAt > cutoff { return entry }
+            if let entry = peripherals[id], entry.lastSeenAt > cutoff { return [entry] }
             // Address rotated: drop the pin so we re-acquire under the new identifier.
             authenticatedPeripheralId = nil
         }
 
         return peripherals.values
             .filter { $0.lastSeenAt > cutoff && ($0.averageRSSI ?? -200) >= nearRSSIThreshold }
-            .max { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }
     }
 
     private func startHandshake(peripheral: CBPeripheral, paired: PairedDevice) {
@@ -359,6 +382,11 @@ final class PresenceStateMachine: ObservableObject {
                 self.log.info("Handshake already in progress; leaving the running one alone")
 
             case .failure(let error):
+                // The watchdog already retried twice, so this handle is dead — drop it or the
+                // next attempt selects the same one and stalls again.
+                if case .connectionFailed = error {
+                    self.bleCentral.forget(peripheralId: peripheral.identifier)
+                }
                 self.lastAuthFailureDate = Date()
                 self.lastFailureWasTransport = error.isTransportLevel
                 self.lastFailureWasDenial = error.isDenial
@@ -440,7 +468,7 @@ final class PresenceStateMachine: ObservableObject {
                 return
             }
             self.lastHeartbeatAuthDate = Date()
-            if let entry = self.currentTarget() {
+            if let entry = self.connectTarget() {
                 self.gattClient.authenticate(
                     peripheral: entry.peripheral,
                     macInstallationId: self.pairingManager.macInstallationId,
