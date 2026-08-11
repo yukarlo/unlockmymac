@@ -1,0 +1,447 @@
+import AppKit
+import ApplicationServices
+import Carbon
+import Combine
+import Foundation
+
+/// Translates characters to macOS CGVirtualKey codes and modifier flags.
+struct KeyCodeMapper {
+
+    struct KeyStroke {
+        let keyCode: CGKeyCode
+        let shift: Bool
+    }
+
+    /// Maps a Character to its CGKeyCode and shift state using ANSI table with UCKeyTranslate fallback.
+    static func keyStroke(for char: Character) -> KeyStroke? {
+        if let stroke = fallbackAnsiKeyStroke(char: char) {
+            return stroke
+        }
+        return ucKeyTranslate(char: char)
+    }
+
+    private static func fallbackAnsiKeyStroke(char: Character) -> KeyStroke? {
+        switch char {
+        case "a": return KeyStroke(keyCode: 0, shift: false)
+        case "A": return KeyStroke(keyCode: 0, shift: true)
+        case "b": return KeyStroke(keyCode: 11, shift: false)
+        case "B": return KeyStroke(keyCode: 11, shift: true)
+        case "c": return KeyStroke(keyCode: 8, shift: false)
+        case "C": return KeyStroke(keyCode: 8, shift: true)
+        case "d": return KeyStroke(keyCode: 2, shift: false)
+        case "D": return KeyStroke(keyCode: 2, shift: true)
+        case "e": return KeyStroke(keyCode: 14, shift: false)
+        case "E": return KeyStroke(keyCode: 14, shift: true)
+        case "f": return KeyStroke(keyCode: 3, shift: false)
+        case "F": return KeyStroke(keyCode: 3, shift: true)
+        case "g": return KeyStroke(keyCode: 5, shift: false)
+        case "G": return KeyStroke(keyCode: 5, shift: true)
+        case "h": return KeyStroke(keyCode: 4, shift: false)
+        case "H": return KeyStroke(keyCode: 4, shift: true)
+        case "i": return KeyStroke(keyCode: 34, shift: false)
+        case "I": return KeyStroke(keyCode: 34, shift: true)
+        case "j": return KeyStroke(keyCode: 38, shift: false)
+        case "J": return KeyStroke(keyCode: 38, shift: true)
+        case "k": return KeyStroke(keyCode: 40, shift: false)
+        case "K": return KeyStroke(keyCode: 40, shift: true)
+        case "l": return KeyStroke(keyCode: 37, shift: false)
+        case "L": return KeyStroke(keyCode: 37, shift: true)
+        case "m": return KeyStroke(keyCode: 46, shift: false)
+        case "M": return KeyStroke(keyCode: 46, shift: true)
+        case "n": return KeyStroke(keyCode: 45, shift: false)
+        case "N": return KeyStroke(keyCode: 45, shift: true)
+        case "o": return KeyStroke(keyCode: 31, shift: false)
+        case "O": return KeyStroke(keyCode: 31, shift: true)
+        case "p": return KeyStroke(keyCode: 35, shift: false)
+        case "P": return KeyStroke(keyCode: 35, shift: true)
+        case "q": return KeyStroke(keyCode: 12, shift: false)
+        case "Q": return KeyStroke(keyCode: 12, shift: true)
+        case "r": return KeyStroke(keyCode: 15, shift: false)
+        case "R": return KeyStroke(keyCode: 15, shift: true)
+        case "s": return KeyStroke(keyCode: 1, shift: false)
+        case "S": return KeyStroke(keyCode: 1, shift: true)
+        case "t": return KeyStroke(keyCode: 17, shift: false)
+        case "T": return KeyStroke(keyCode: 17, shift: true)
+        case "u": return KeyStroke(keyCode: 32, shift: false)
+        case "U": return KeyStroke(keyCode: 32, shift: true)
+        case "v": return KeyStroke(keyCode: 9, shift: false)
+        case "V": return KeyStroke(keyCode: 9, shift: true)
+        case "w": return KeyStroke(keyCode: 13, shift: false)
+        case "W": return KeyStroke(keyCode: 13, shift: true)
+        case "x": return KeyStroke(keyCode: 7, shift: false)
+        case "X": return KeyStroke(keyCode: 7, shift: true)
+        case "y": return KeyStroke(keyCode: 16, shift: false)
+        case "Y": return KeyStroke(keyCode: 16, shift: true)
+        case "z": return KeyStroke(keyCode: 6, shift: false)
+        case "Z": return KeyStroke(keyCode: 6, shift: true)
+
+        case "1": return KeyStroke(keyCode: 18, shift: false)
+        case "!": return KeyStroke(keyCode: 18, shift: true)
+        case "2": return KeyStroke(keyCode: 19, shift: false)
+        case "@": return KeyStroke(keyCode: 19, shift: true)
+        case "3": return KeyStroke(keyCode: 20, shift: false)
+        case "#": return KeyStroke(keyCode: 20, shift: true)
+        case "4": return KeyStroke(keyCode: 21, shift: false)
+        case "$": return KeyStroke(keyCode: 21, shift: true)
+        case "5": return KeyStroke(keyCode: 23, shift: false)
+        case "%": return KeyStroke(keyCode: 23, shift: true)
+        case "6": return KeyStroke(keyCode: 22, shift: false)
+        case "^": return KeyStroke(keyCode: 22, shift: true)
+        case "7": return KeyStroke(keyCode: 26, shift: false)
+        case "&": return KeyStroke(keyCode: 26, shift: true)
+        case "8": return KeyStroke(keyCode: 28, shift: false)
+        case "*": return KeyStroke(keyCode: 28, shift: true)
+        case "9": return KeyStroke(keyCode: 25, shift: false)
+        case "(": return KeyStroke(keyCode: 25, shift: true)
+        case "0": return KeyStroke(keyCode: 29, shift: false)
+        case ")": return KeyStroke(keyCode: 29, shift: true)
+
+        case "-": return KeyStroke(keyCode: 27, shift: false)
+        case "_": return KeyStroke(keyCode: 27, shift: true)
+        case "=": return KeyStroke(keyCode: 24, shift: false)
+        case "+": return KeyStroke(keyCode: 24, shift: true)
+        case "[": return KeyStroke(keyCode: 33, shift: false)
+        case "{": return KeyStroke(keyCode: 33, shift: true)
+        case "]": return KeyStroke(keyCode: 30, shift: false)
+        case "}": return KeyStroke(keyCode: 30, shift: true)
+        case "\\": return KeyStroke(keyCode: 42, shift: false)
+        case "|": return KeyStroke(keyCode: 42, shift: true)
+        case ";": return KeyStroke(keyCode: 41, shift: false)
+        case ":": return KeyStroke(keyCode: 41, shift: true)
+        case "'": return KeyStroke(keyCode: 39, shift: false)
+        case "\"": return KeyStroke(keyCode: 39, shift: true)
+        case ",": return KeyStroke(keyCode: 43, shift: false)
+        case "<": return KeyStroke(keyCode: 43, shift: true)
+        case ".": return KeyStroke(keyCode: 47, shift: false)
+        case ">": return KeyStroke(keyCode: 47, shift: true)
+        case "/": return KeyStroke(keyCode: 44, shift: false)
+        case "?": return KeyStroke(keyCode: 44, shift: true)
+        case "`": return KeyStroke(keyCode: 50, shift: false)
+        case "~": return KeyStroke(keyCode: 50, shift: true)
+        case " ": return KeyStroke(keyCode: 49, shift: false)
+        default: return nil
+        }
+    }
+
+    private static func ucKeyTranslate(char: Character) -> KeyStroke? {
+        guard let inputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
+            return nil
+        }
+        guard let layoutDataRaw = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData) else {
+            return nil
+        }
+        let layoutData = Unmanaged<CFData>.fromOpaque(layoutDataRaw).takeUnretainedValue()
+        guard let keyLayoutPtr = CFDataGetBytePtr(layoutData) else {
+            return nil
+        }
+        let keyLayout = keyLayoutPtr.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { $0 }
+
+        var deadKeyState: UInt32 = 0
+        var maxStringLength = 4
+        var actualStringLength = 0
+        var unicodeString = [UniChar](repeating: 0, count: maxStringLength)
+
+        let targetScalar = char.unicodeScalars.first?.value ?? 0
+
+        for keyCode in UInt16(0)...UInt16(127) {
+            for shift in [false, true] {
+                let modifierState: UInt32 = shift ? (1 << 1) : 0
+                deadKeyState = 0
+                actualStringLength = 0
+
+                let result = UCKeyTranslate(
+                    keyLayout,
+                    keyCode,
+                    UInt16(kUCKeyActionDisplay),
+                    modifierState,
+                    UInt32(LMGetKbdType()),
+                    OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                    &deadKeyState,
+                    maxStringLength,
+                    &actualStringLength,
+                    &unicodeString
+                )
+
+                if result == noErr && actualStringLength > 0 && UInt32(unicodeString[0]) == targetScalar {
+                    return KeyStroke(keyCode: CGKeyCode(keyCode), shift: shift)
+                }
+            }
+        }
+        return nil
+    }
+}
+
+/// Manages Accessibility permissions and auto-unlock keystroke injection.
+final class AutoUnlockController: ObservableObject {
+
+    private let enabledKey = "com.karloyu.macbleunlock.autoUnlockEnabled"
+
+    @Published var isEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isEnabled, forKey: enabledKey)
+            EventLogger.shared.info(category: "AutoUnlock", "Auto-unlock toggled \(isEnabled ? "ON" : "OFF")")
+        }
+    }
+
+    @Published private(set) var isAccessibilityAuthorized: Bool = false
+
+    weak var systemActionController: SystemActionController?
+
+    private var cancellables = Set<AnyCancellable>()
+    private var pollTimer: Timer?
+
+    /// Set once an attempt is made; cleared when screen locks or unlocks.
+    private var hasAttemptedThisLockSession = false
+    private var lastAttemptDate: Date?
+
+    /// Virtual keycodes (ANSI layout-independent).
+    private static let keyA: CGKeyCode = 0x00
+    private static let keyReturn: CGKeyCode = 0x24
+    private static let keyDelete: CGKeyCode = 0x33
+    private static let keyCommand: CGKeyCode = 0x37
+    private static let keyShift: CGKeyCode = 0x38
+    private static let keySpace: CGKeyCode = 0x31
+    private static let keyEscape: CGKeyCode = 0x35
+
+    /// Backstop in case the unlock notification is missed.
+    private static let minRetryInterval: TimeInterval = 30
+
+    /// Gap between synthesised keystrokes.
+    private static let keystrokeIntervalMicros: UInt32 = 25_000
+
+    init() {
+        self.isEnabled = UserDefaults.standard.bool(forKey: enabledKey)
+        self.isAccessibilityAuthorized = AXIsProcessTrusted()
+
+        observeAppActivation()
+        startAccessibilityPolling()
+        observeScreenLockState()
+    }
+
+    deinit {
+        pollTimer?.invalidate()
+    }
+
+    /// Checks and updates current Accessibility authorization state.
+    func checkAccessibilityPermission() {
+        let authorized = AXIsProcessTrusted()
+        DispatchQueue.main.async { [weak self] in
+            if self?.isAccessibilityAuthorized != authorized {
+                self?.isAccessibilityAuthorized = authorized
+                EventLogger.shared.info(category: "AutoUnlock", "Accessibility permission state: \(authorized ? "GRANTED" : "NOT GRANTED")")
+            }
+        }
+    }
+
+    /// Prompts the user to grant Accessibility permissions and opens System Settings.
+    func promptAccessibilityPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+
+        // Open System Settings -> Privacy & Security -> Accessibility
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+        checkAccessibilityPermission()
+    }
+
+    /// Performs keypress automation to enter password on the macOS lock screen.
+    func attemptAutoUnlock() {
+        checkAccessibilityPermission()
+
+        guard isEnabled else {
+            EventLogger.shared.info(category: "AutoUnlock", "Auto-unlock skipped (feature disabled)")
+            return
+        }
+
+        guard isAccessibilityAuthorized else {
+            EventLogger.shared.warning(category: "AutoUnlock", "Auto-unlock failed: Accessibility permission not granted")
+            return
+        }
+
+        // Must be currently on lock screen! Do not consume session flag if screen is unlocked.
+        if let systemActionController, !systemActionController.isScreenLocked {
+            EventLogger.shared.info(category: "AutoUnlock", "Auto-unlock skipped (screen is not currently locked)")
+            return
+        }
+
+        guard let password = KeychainManager.getPassword(), !password.isEmpty else {
+            EventLogger.shared.warning(category: "AutoUnlock", "Auto-unlock failed: No password stored in Keychain")
+            return
+        }
+
+        // One attempt per lock session.
+        if hasAttemptedThisLockSession {
+            EventLogger.shared.info(category: "AutoUnlock", "Auto-unlock already attempted for this lock session")
+            return
+        }
+        if let last = lastAttemptDate, Date().timeIntervalSince(last) < Self.minRetryInterval {
+            return
+        }
+        lastAttemptDate = Date()
+
+        EventLogger.shared.info(category: "AutoUnlock", "Executing auto-unlock keystroke sequence")
+
+        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            guard let self else { return }
+
+            // Step 1: Send Escape to wake display & clear screen saver / clock without inserting text
+            self.postVirtualKey(Self.keyEscape)
+            usleep(250_000)
+
+            // Step 2: Clear anything in the password field (Cmd+A with physical Cmd key, then 5 Delete keypresses)
+            self.postVirtualKey(Self.keyA, flags: .maskCommand)
+            usleep(60_000)
+            for _ in 0..<5 {
+                self.postVirtualKey(Self.keyDelete)
+                usleep(20_000)
+            }
+            usleep(100_000)
+
+            // Step 3: Type password characters using physical CGKeyCodes & explicit Shift modifier events
+            self.postPassword(password)
+            usleep(150_000)
+
+            // Step 4: Submit password via Return key
+            self.postVirtualKey(Self.keyReturn)
+            usleep(100_000)
+
+            DispatchQueue.main.async {
+                self.hasAttemptedThisLockSession = true
+            }
+
+            EventLogger.shared.success(category: "AutoUnlock", "Auto-unlock keystroke sequence posted")
+        }
+    }
+
+    /// Re-arms auto-unlock whenever screen locks or unlocks.
+    private func observeScreenLockState() {
+        let center = DistributedNotificationCenter.default()
+
+        center.addObserver(
+            forName: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.hasAttemptedThisLockSession = false
+            EventLogger.shared.info(category: "AutoUnlock", "Screen locked — auto-unlock re-armed")
+        }
+
+        center.addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.hasAttemptedThisLockSession = false
+        }
+    }
+
+    private func observeAppActivation() {
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.checkAccessibilityPermission()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func startAccessibilityPolling() {
+        pollTimer?.invalidate()
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.checkAccessibilityPermission()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
+    private func postPassword(_ string: String) {
+        for char in string {
+            if let stroke = KeyCodeMapper.keyStroke(for: char) {
+                postKeyStroke(stroke)
+                usleep(Self.keystrokeIntervalMicros)
+            } else {
+                postUnicodeChar(char)
+                usleep(Self.keystrokeIntervalMicros)
+            }
+        }
+    }
+
+    private func postKeyStroke(_ stroke: KeyCodeMapper.KeyStroke) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: stroke.keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: stroke.keyCode, keyDown: false) else { return }
+
+        if stroke.shift {
+            let shiftDown = CGEvent(keyboardEventSource: source, virtualKey: Self.keyShift, keyDown: true)
+            shiftDown?.flags = .maskShift
+            shiftDown?.post(tap: .cghidEventTap)
+            usleep(5_000)
+
+            keyDown.flags = .maskShift
+            keyUp.flags = .maskShift
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            usleep(5_000)
+
+            let shiftUp = CGEvent(keyboardEventSource: source, virtualKey: Self.keyShift, keyDown: false)
+            shiftUp?.post(tap: .cghidEventTap)
+        } else {
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
+    }
+
+    private func postVirtualKey(_ virtualKey: CGKeyCode, flags: CGEventFlags = []) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false) else { return }
+
+        if flags.contains(.maskCommand) {
+            let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: Self.keyCommand, keyDown: true)
+            cmdDown?.flags = .maskCommand
+            cmdDown?.post(tap: .cghidEventTap)
+            usleep(5_000)
+
+            keyDown.flags = flags
+            keyUp.flags = flags
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            usleep(5_000)
+
+            let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: Self.keyCommand, keyDown: false)
+            cmdUp?.post(tap: .cghidEventTap)
+        } else if flags.contains(.maskShift) {
+            let shiftDown = CGEvent(keyboardEventSource: source, virtualKey: Self.keyShift, keyDown: true)
+            shiftDown?.flags = .maskShift
+            shiftDown?.post(tap: .cghidEventTap)
+            usleep(5_000)
+
+            keyDown.flags = flags
+            keyUp.flags = flags
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            usleep(5_000)
+
+            let shiftUp = CGEvent(keyboardEventSource: source, virtualKey: Self.keyShift, keyDown: false)
+            shiftUp?.post(tap: .cghidEventTap)
+        } else {
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
+    }
+
+    private func postUnicodeChar(_ char: Character) {
+        let source = CGEventSource(stateID: .hidSystemState)
+        for unit in char.utf16 {
+            var codeUnit = unit
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else { continue }
+
+            keyDown.keyboardSetUnicodeString(stringLength: 1, unicodeString: &codeUnit)
+            keyUp.keyboardSetUnicodeString(stringLength: 1, unicodeString: &codeUnit)
+
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
+    }
+}
