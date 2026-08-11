@@ -48,11 +48,11 @@ final class BLECentralManager: NSObject, ObservableObject {
 
     /// How long a peripheral can go unseen before it's dropped from `discoveredPeripherals`.
     ///
-    /// Kept short because Android mints a new resolvable private address on every
-    /// `startAdvertising`: a rotated-away entry is a dead handle, and connecting to one stalls
-    /// until the watchdog gives up rather than failing fast. Absence-driven locking is governed
-    /// separately by `PresenceStateMachine.absenceTimeoutSeconds`, so this does not affect it.
-    var staleTimeout: TimeInterval = 10
+    /// Long enough to ride out bursty reception (measured max gap between advertisement
+    /// callbacks: 5.73 s). A short timeout swept entries during ordinary gaps, which read as the
+    /// phone leaving. Rotated-away addresses are handled where it matters — the connect watchdog
+    /// in `GATTChallengeClient` — rather than by deleting evidence that the phone is present.
+    var staleTimeout: TimeInterval = 30
 
     /// Receives connect/fail/disconnect callbacks for a single in-flight GATT session
     /// (e.g. `GATTChallengeClient`). Only one consumer is supported at a time, which

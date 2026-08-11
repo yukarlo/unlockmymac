@@ -91,6 +91,14 @@ final class PresenceStateMachine: ObservableObject {
     private var wakeObserverToken: NSObjectProtocol?
     private var lastHeartbeatAuthDate: Date?
 
+    /// How stale an advertisement may be before the phone counts as gone.
+    ///
+    /// Measured against the real advertisement stream: 12 callbacks in 25 s, median gap 0.29 s,
+    /// **max gap 5.73 s**. The previous 5 s window sat inside that distribution, so ordinary
+    /// bursty reception was repeatedly mistaken for the phone leaving. 15 s is ~3x the observed
+    /// worst case.
+    private static let presenceFreshnessSeconds: TimeInterval = 15
+
     /// Heartbeat cadence while auto-unlock can still act on a verified presence.
     private static let heartbeatActiveSeconds: TimeInterval = 10
 
@@ -114,6 +122,13 @@ final class PresenceStateMachine: ObservableObject {
         observeDiscoveredPeripherals()
         observeScreenLockState()
         observeSystemWake()
+
+        // Launching while already locked (login item, or a restart during a lock session) still
+        // needs the radio up. The 5s reconciliation poll in SystemActionController corrects the
+        // flag shortly after if this initial read is wrong, and the observer follows.
+        if systemActionController.isScreenLocked {
+            beginScanningForUnlock()
+        }
     }
 
     deinit {
@@ -133,6 +148,8 @@ final class PresenceStateMachine: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
+            // Only relevant while locked — that is the only time the radio is up.
+            guard self.systemActionController.isScreenLocked else { return }
             self.lastAuthFailureDate = nil
             self.lastFailureWasTransport = false
             self.authenticatedPeripheralId = nil
@@ -156,24 +173,43 @@ final class PresenceStateMachine: ObservableObject {
     private func observeScreenLockState() {
         systemActionController.$isScreenLocked
             .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .sink { [weak self] isLocked in
-                guard let self, isLocked else { return }
-                // If screen becomes locked while phone is authenticated or in cooldown, trigger re-authentication for auto-unlock
-                if self.currentState == .unlockCooldown || self.currentState == .authenticatedNear {
-                    EventLogger.shared.info(category: "State", "Screen locked while phone is nearby. Re-authenticating for auto-unlock...")
-                    self.transitionTo(.candidateNear)
-                    if let target = self.currentTarget(), let paired = self.pairingManager.pairedDevice {
-                        self.startHandshake(peripheral: target.peripheral, paired: paired)
-                    } else {
-                        EventLogger.shared.warning(
-                            category: "State",
-                            "Screen locked but no freshly advertising phone to re-authenticate"
-                        )
-                        self.transitionTo(.absent)
-                    }
+                guard let self else { return }
+                if isLocked {
+                    self.beginScanningForUnlock()
+                } else {
+                    self.stopScanningWhileUnlocked()
                 }
             }
             .store(in: &cancellables)
+    }
+
+    /// Screen locked: bring the radio up and try to unlock.
+    ///
+    /// Scanning exists only to serve auto-unlock, so it runs only while the Mac is locked. That
+    /// keeps the radio idle during normal use and removes the false-absence problem entirely —
+    /// bursty BLE reception can no longer be mistaken for the phone leaving, because nothing is
+    /// watching for the phone leaving any more.
+    private func beginScanningForUnlock() {
+        guard !isPaused, pairingManager.pairedDevice != nil else { return }
+        EventLogger.shared.info(category: "State", "Screen locked — scanning for the paired phone")
+        bleCentral.start()
+
+        // A phone discovered before the lock is already stale; re-acquire from scratch.
+        transitionTo(.absent)
+    }
+
+    /// Screen unlocked: shut the radio down and forget everything.
+    private func stopScanningWhileUnlocked() {
+        EventLogger.shared.info(category: "State", "Screen unlocked — stopping BLE until next lock")
+        bleCentral.stop()
+        stopHeartbeatTimer()
+        resetAbsenceTimer()
+        authenticatedPeripheralId = nil
+        lastAuthFailureDate = nil
+        lastHeartbeatAuthDate = nil
+        transitionTo(.absent)
     }
 
     private func evaluatePresence() {
@@ -212,17 +248,14 @@ final class PresenceStateMachine: ObservableObject {
             break
 
         case .authenticatedNear:
-            if averageRSSI <= farRSSIThreshold {
-                EventLogger.shared.warning(category: "State", "Phone RSSI dropped below far threshold (\(String(format: "%.1f", averageRSSI)) dBm)")
-                handleMissingPeripheral()
-            } else {
-                transitionTo(.unlockCooldown)
-            }
+            transitionTo(.unlockCooldown)
 
         case .unlockCooldown:
-            if averageRSSI <= farRSSIThreshold {
-                handleMissingPeripheral()
-            }
+            // Nothing to do while the phone remains visible. Presence loss is handled above by
+            // `currentTarget()` returning nil, not by an RSSI threshold — there is no longer a
+            // lock action to trigger, so a "far" band buys nothing and only added a second way
+            // to mistake bursty reception for departure.
+            break
         }
     }
 
@@ -236,7 +269,7 @@ final class PresenceStateMachine: ObservableObject {
     ///
     /// Falling back to the strongest fresh candidate is safe: the address is never identity
     /// here, the signature is. It also replaces an arbitrary `Dictionary.first`.
-    private func currentTarget(freshWithin: TimeInterval = 5) -> DiscoveredPeripheral? {
+    private func currentTarget(freshWithin: TimeInterval = presenceFreshnessSeconds) -> DiscoveredPeripheral? {
         let peripherals = bleCentral.discoveredPeripherals
         let cutoff = Date().addingTimeInterval(-freshWithin)
 
@@ -323,14 +356,16 @@ final class PresenceStateMachine: ObservableObject {
             return
         }
 
-        // Start absence window timer (30s) to avoid transient BLE drop locks
+        // Presence lost. This no longer locks the Mac — proximity auto-lock was removed, and
+        // macOS's own idle lock secures the session. All this does is drop back to `.absent`
+        // after a grace window so a re-approach re-acquires cleanly. The grace exists because
+        // BLE reception is bursty; thrashing here would burn auto-unlock attempts.
         if absenceTimer == nil {
-            EventLogger.shared.info(category: "State", "Phone signal lost/far, starting \(Int(absenceTimeoutSeconds))s absence grace window")
             absenceTimer = Timer.scheduledTimer(withTimeInterval: absenceTimeoutSeconds, repeats: false) { [weak self] _ in
-                EventLogger.shared.warning(category: "State", "Sustained absence confirmed, locking macOS session")
-                self?.authenticatedPeripheralId = nil
-                self?.transitionTo(.absent)
-                self?.systemActionController.lockScreen()
+                guard let self else { return }
+                EventLogger.shared.info(category: "State", "Phone no longer detected; will re-acquire on return")
+                self.authenticatedPeripheralId = nil
+                self.transitionTo(.absent)
             }
         }
     }

@@ -31,9 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         menuController.install()
 
-        // Eagerly initialize state machine listeners and start BLE scanning
+        // Eagerly initialize the state machine so its observers are installed. It owns the BLE
+        // lifecycle now: scanning runs only while the screen is locked, so there is nothing to
+        // start here.
         _ = presenceStateMachine
-        bleCentral.start()
 
         EventLogger.shared.info(category: "App", "MacBleUnlock started (Installation ID: \(pairingManager.macInstallationId))")
     }
