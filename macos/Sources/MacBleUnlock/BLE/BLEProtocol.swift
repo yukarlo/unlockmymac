@@ -24,10 +24,10 @@ enum BLEProtocol {
     static let rssiSampleWindow = 5
 
     /// A peripheral must average at/above this RSSI to be treated as a "near" candidate.
-    static let nearRSSIThresholdDBm = -75
+    static let nearRSSIThresholdDBm = -85
 
     /// A peripheral at/below this RSSI is treated only as a supporting absence signal.
-    static let farRSSIThresholdDBm = -90
+    static let farRSSIThresholdDBm = -95
 
     /// Maximum time allowed for discovery + connect + full authentication handshake.
     static let authTimeoutSeconds: TimeInterval = 8
