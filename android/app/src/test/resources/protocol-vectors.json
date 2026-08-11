@@ -1,0 +1,139 @@
+{
+  "_comment": [
+    "Shared protocol test vectors for the BLE Mac unlock project.",
+    "Both the Android app and the macOS app should be able to run these and agree.",
+    "The keypair here is throwaway and exists only for testing; no real identity key",
+    "is ever exported from AndroidKeyStore."
+  ],
+  "version": 1,
+  "service": {
+    "serviceUuid": "f9a2b8e3-54cd-4e92-a123-765432198765",
+    "challengeCharacteristic": "f9a2b8e3-54cd-4e92-a123-765432198766",
+    "responseCharacteristic": "f9a2b8e3-54cd-4e92-a123-765432198767",
+    "pairingCharacteristic": "f9a2b8e3-54cd-4e92-a123-765432198768"
+  },
+  "gattStatus": {
+    "pendingApproval": 128,
+    "rejected": 129,
+    "invalidOffset": 7
+  },
+  "identity": {
+    "macInstallationId": "6F9619FF-8B86-D011-B42D-00CF4FC964FF",
+    "deviceId": "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+    "publicKeySpkiDerBase64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAElblOMror8jW7WYLJO+mw2AKMqiTCefC04goNJdzLbr5VZJBG9AdRmaJUXMZAjLt86zrY79lNhhjnFdZA87GdZg=="
+  },
+  "signatureVector": {
+    "_comment": [
+      "A real SHA256withECDSA signature over payloadBase64, made with the private half",
+      "of identity.publicKeySpkiDerBase64. ECDSA is randomised, so a fresh signature over",
+      "the same payload will differ - only verification is deterministic.",
+      "Swift: P256.Signing.PublicKey(derRepresentation:) + ECDSASignature(derRepresentation:)."
+    ],
+    "payloadBase64": "bWFjLWJsZS11bmxvY2s6djEKbWFjSW5zdGFsbGF0aW9uSWQ9NkY5NjE5RkYtOEI4Ni1EMDExLUI0MkQtMDBDRjRGQzk2NEZGCmRldmljZUlkPTFiNGUyOGJhLTJmYTEtMTFkMi04ODNmLTAwMTZkM2NjYTQyNwppc3N1ZWRBdD0xNzYwMDAwMDAwMDAwCmNoYWxsZW5nZT1BQUVDQXdRRkJnY0lDUW9MREEwT0R4QVJFaE1VRlJZWEdCa2FHeHdkSGg4",
+    "payloadLength": 195,
+    "issuedAtMs": 1760000000000,
+    "challengeBase64Url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "signatureDerBase64": "MEYCIQCzdmq6Qw8C4B9OQyJCp1ptGN3jyDVEwMao3U89opaLOQIhAO7mHeSu7zP6k53uV28yX2VN7E/TeaXuKxrkjyFWSg+E",
+    "expected": "verifies"
+  },
+  "challengeGrammar": {
+    "_comment": [
+      "The wire format is strict: exactly five LF-separated lines, fixed key order,",
+      "no CR, no trailing newline, no leading or trailing whitespace on any line.",
+      "The bytes received are the bytes signed - never a re-serialised copy."
+    ],
+    "prefix": "mac-ble-unlock:v1",
+    "keyOrder": ["macInstallationId", "deviceId", "issuedAt", "challenge"],
+    "challengeBytes": 32,
+    "challengeEncoding": "base64url",
+    "maxPayloadBytes": 512,
+    "maxClockSkewMs": 120000
+  },
+  "acceptCases": [
+    {
+      "name": "canonical payload at issuedAt",
+      "nowMs": 1760000000000,
+      "expect": "accepted"
+    },
+    {
+      "name": "clock skew just inside the window",
+      "nowMs": 1760000119000,
+      "expect": "accepted"
+    },
+    {
+      "name": "identifiers compared case-insensitively (Swift uppercases UUIDs)",
+      "pairedMacInstallationId": "6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+      "ownDeviceId": "1B4E28BA-2FA1-11D2-883F-0016D3CCA427",
+      "nowMs": 1760000000000,
+      "expect": "accepted"
+    }
+  ],
+  "rejectCases": [
+    { "name": "wrong prefix", "mutate": "prefix=mac-ble-unlock:v2", "reason": "BAD_PREFIX" },
+    { "name": "missing line", "mutate": "drop-last-line", "reason": "BAD_STRUCTURE" },
+    { "name": "extra line", "mutate": "append \\nextra=1", "reason": "BAD_STRUCTURE" },
+    { "name": "trailing newline", "mutate": "append \\n", "reason": "BAD_STRUCTURE" },
+    { "name": "CRLF line endings", "mutate": "replace \\n with \\r\\n", "reason": "BAD_STRUCTURE" },
+    { "name": "trailing space on a value", "mutate": "deviceId value + space", "reason": "BAD_STRUCTURE" },
+    { "name": "reordered keys", "mutate": "swap deviceId and macInstallationId lines", "reason": "BAD_STRUCTURE" },
+    { "name": "non-UUID identifier", "mutate": "macInstallationId=not-a-uuid", "reason": "BAD_UUID" },
+    { "name": "non-numeric timestamp", "mutate": "issuedAt=soon", "reason": "BAD_TIMESTAMP" },
+    { "name": "challenge of 31 bytes", "mutate": "challenge=31-byte value", "reason": "BAD_CHALLENGE" },
+    { "name": "challenge of 33 bytes", "mutate": "challenge=33-byte value", "reason": "BAD_CHALLENGE" },
+    { "name": "standard base64 instead of base64url", "mutate": "challenge contains + or /", "reason": "BAD_CHALLENGE" },
+    { "name": "invalid UTF-8", "mutate": "prepend 0xC3 0x28", "reason": "NOT_UTF8" },
+    { "name": "payload over 512 bytes", "mutate": "pad to 513 bytes", "reason": "TOO_LARGE" },
+    { "name": "no pairing on this phone", "context": "pairedMacInstallationId=null", "reason": "NOT_PAIRED" },
+    { "name": "challenge from an unpaired Mac", "context": "different macInstallationId", "reason": "UNKNOWN_MAC" },
+    { "name": "challenge addressed to another phone", "context": "different deviceId", "reason": "WRONG_DEVICE" },
+    { "name": "timestamp 5 minutes stale", "context": "nowMs=1760000300000", "reason": "CLOCK_SKEW" },
+    { "name": "timestamp 5 minutes in the future", "context": "nowMs=1759999700000", "reason": "CLOCK_SKEW" },
+    { "name": "same challenge written twice", "context": "second offer", "reason": "REPLAY" },
+    { "name": "second central during an active session", "context": "other connection has a live challenge", "reason": "BUSY" },
+    { "name": "response read with no prior write", "context": "read ...767 first", "reason": "NO_PENDING_CHALLENGE" },
+    { "name": "response read after the TTL", "context": "advance past challenge TTL", "reason": "EXPIRED" },
+    { "name": "second response read", "context": "read ...767 twice", "reason": "ALREADY_USED" },
+    { "name": "prepared or offset write", "context": "preparedWrite=true or offset>0", "reason": "PREPARED_WRITE" }
+  ],
+  "pairing": {
+    "invite": {
+      "_comment": "JSON payload of the QR code the Mac displays.",
+      "example": {
+        "v": 1,
+        "macInstallationId": "6F9619FF-8B86-D011-B42D-00CF4FC964FF",
+        "token": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUF",
+        "name": "Karlo's MacBook",
+        "exp": 1760000060000,
+        "keyFormat": "x509-spki-der-p256"
+      },
+      "minTokenBytes": 16,
+      "tokenEncoding": "base64url"
+    },
+    "claim": {
+      "_comment": "Written by the Mac to the pairing characteristic. Same strict grammar.",
+      "prefix": "mac-ble-pair:v1",
+      "keyOrder": ["macInstallationId", "token", "issuedAt"]
+    },
+    "response": {
+      "_comment": "Read back by the Mac. May span several ATT read-blob fragments.",
+      "prefix": "mac-ble-pair-resp:v1",
+      "keyOrder": ["deviceId", "name", "publicKey"],
+      "publicKeyEncoding": "base64 X.509 SubjectPublicKeyInfo DER",
+      "publicKeyLengthBytes": 91
+    },
+    "windowMs": 60000,
+    "rejectCases": [
+      { "name": "claim while no window is open", "reason": "PAIRING_WINDOW_CLOSED" },
+      { "name": "claim with a token that does not match the scanned QR", "reason": "BAD_TOKEN" },
+      { "name": "claim from a different Mac than the QR named", "reason": "UNKNOWN_MAC" },
+      { "name": "claim after the QR's own exp", "reason": "PAIRING_WINDOW_CLOSED" },
+      { "name": "second claim in the same window", "reason": "PAIRING_WINDOW_CLOSED" }
+    ]
+  },
+  "timings": {
+    "challengeTtlMs": 10000,
+    "challengeTtlWithApprovalMs": 60000,
+    "pairingWindowMs": 60000,
+    "maxClockSkewMs": 120000
+  }
+}
