@@ -1,3 +1,4 @@
+import AppKit
 import CoreBluetooth
 import Foundation
 import os
@@ -46,7 +47,12 @@ final class BLECentralManager: NSObject, ObservableObject {
     @Published private(set) var discoveredPeripherals: [UUID: DiscoveredPeripheral] = [:]
 
     /// How long a peripheral can go unseen before it's dropped from `discoveredPeripherals`.
-    var staleTimeout: TimeInterval = 30
+    ///
+    /// Kept short because Android mints a new resolvable private address on every
+    /// `startAdvertising`: a rotated-away entry is a dead handle, and connecting to one stalls
+    /// until the watchdog gives up rather than failing fast. Absence-driven locking is governed
+    /// separately by `PresenceStateMachine.absenceTimeoutSeconds`, so this does not affect it.
+    var staleTimeout: TimeInterval = 10
 
     /// Receives connect/fail/disconnect callbacks for a single in-flight GATT session
     /// (e.g. `GATTChallengeClient`). Only one consumer is supported at a time, which
@@ -71,9 +77,84 @@ final class BLECentralManager: NSObject, ObservableObject {
     /// Options the current scan was started with, so `updateScanMode` can no-op when unchanged.
     private var activeAllowDuplicates: Bool?
 
+    /// Tokens for the sleep/wake observers, removed in `deinit`.
+    private var powerNotificationTokens: [NSObjectProtocol] = []
+
     override init() {
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: queue)
+        observeSystemSleepWake()
+    }
+
+    deinit {
+        let center = NSWorkspace.shared.notificationCenter
+        powerNotificationTokens.forEach(center.removeObserver)
+    }
+
+    /// Re-arms scanning across a system sleep.
+    ///
+    /// CoreBluetooth does not scan while the system is asleep, and nothing restarts the scan on
+    /// wake. `updateScanMode` cannot do it either: it is idempotent (deliberately, so it cannot
+    /// abort an in-flight connection) and is only called from a state transition — but a state
+    /// transition requires a discovery, which requires a scan. Without this the app can stay
+    /// deaf after every wake.
+    private func observeSystemSleepWake() {
+        let center = NSWorkspace.shared.notificationCenter
+
+        let willSleep = center.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            // Forget the scan options so the wake path cannot be short-circuited by the
+            // idempotence check in `updateScanMode`.
+            self.queue.async { self.activeAllowDuplicates = nil }
+        }
+
+        let didWake = center.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleSystemWake()
+        }
+
+        powerNotificationTokens = [willSleep, didWake]
+    }
+
+    private func handleSystemWake() {
+        guard wantsScanning else { return }
+        log.info("System woke; restarting scan and dropping stale peripherals")
+        EventLogger.shared.info(category: "BLE", "Woke from sleep — rescanning")
+
+        // Every entry predates the sleep, and Android has rotated its private address at least
+        // once by now, so all of them are dead handles.
+        discoveredPeripherals.removeAll()
+        restartScanning()
+        startStaleSweepTimer()
+    }
+
+    /// Unconditionally tears the scan down and starts it again.
+    ///
+    /// Distinct from `updateScanMode`, which must stay idempotent. Use only when the scan is
+    /// known to be dead or untrustworthy — currently just after a system wake.
+    func restartScanning() {
+        queue.async { [weak self] in
+            guard let self, self.wantsScanning, self.centralManager.state == .poweredOn else { return }
+            if self.centralManager.isScanning {
+                self.centralManager.stopScan()
+            }
+            self.activeAllowDuplicates = true
+            self.centralManager.scanForPeripherals(
+                withServices: [BLEProtocol.serviceUUID],
+                options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+            )
+            self.log.info("Scan restarted")
+            DispatchQueue.main.async { [weak self] in
+                self?.isScanning = true
+            }
+        }
     }
 
     /// Begin scanning for the unlock service UUID.
