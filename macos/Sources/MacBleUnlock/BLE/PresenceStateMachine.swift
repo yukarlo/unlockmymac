@@ -291,7 +291,10 @@ final class PresenceStateMachine: ObservableObject {
     private func startHeartbeatTimer() {
         heartbeatTimer?.invalidate()
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            guard let self, self.currentState == .unlockCooldown, let paired = self.pairingManager.pairedDevice else { return }
+            guard let self,
+                  self.currentState == .unlockCooldown,
+                  self.systemActionController.isScreenLocked,
+                  let paired = self.pairingManager.pairedDevice else { return }
             if let entry = self.currentTarget() {
                 self.gattClient.authenticate(
                     peripheral: entry.peripheral,
