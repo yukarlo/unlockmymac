@@ -191,8 +191,19 @@ final class AutoUnlockController: ObservableObject {
     private var pollTimer: Timer?
 
     /// Set once an attempt is made; cleared when screen locks or unlocks.
-    private var hasAttemptedThisLockSession = false
+    /// Keystroke sequences actually delivered during the current lock session.
+    ///
+    /// A single attempt proved too brittle: one mistimed sequence (login window not ready yet)
+    /// burned the session's only try, leaving the Mac locked for as long as the user was away.
+    /// A small bounded number of spaced retries recovers from that without becoming a password
+    /// guessing loop — macOS does not lock the account at this count.
+    private var attemptsThisLockSession = 0
     private var lastAttemptDate: Date?
+
+    /// True while auto-unlock could still act. Lets the heartbeat slow down once it cannot.
+    var hasAttemptsRemaining: Bool {
+        isEnabled && attemptsThisLockSession < Self.maxAttemptsPerLockSession
+    }
 
     /// Virtual keycodes (ANSI layout-independent).
     private static let keyA: CGKeyCode = 0x00
@@ -204,7 +215,11 @@ final class AutoUnlockController: ObservableObject {
     private static let keyEscape: CGKeyCode = 0x35
 
     /// Backstop in case the unlock notification is missed.
-    private static let minRetryInterval: TimeInterval = 30
+    /// Minimum gap between keystroke sequences within one lock session.
+    private static let minRetryInterval: TimeInterval = 15
+
+    /// Hard ceiling on keystroke sequences per lock session.
+    private static let maxAttemptsPerLockSession = 3
 
     /// Gap between synthesised keystrokes (8ms for fast typing without dropping keys).
     private static let keystrokeIntervalMicros: UInt32 = 8_000
@@ -213,7 +228,11 @@ final class AutoUnlockController: ObservableObject {
     private static let displayWakeTimeout: TimeInterval = 4.0
 
     /// Settle time after the display reports awake, before the login window accepts input.
-    private static let displaySettleMicros: UInt32 = 700_000
+    /// Settle time after the display reports awake.
+    ///
+    /// `CGDisplayIsAsleep` clears while the login window is still coming up, so keystrokes sent
+    /// too soon are discarded — observed as a typed-but-ineffective unlock at 700 ms.
+    private static let displaySettleMicros: UInt32 = 1_500_000
 
     init() {
         self.isEnabled = UserDefaults.standard.bool(forKey: enabledKey)
@@ -276,9 +295,12 @@ final class AutoUnlockController: ObservableObject {
             return
         }
 
-        // One attempt per lock session.
-        if hasAttemptedThisLockSession {
-            EventLogger.shared.info(category: "AutoUnlock", "Auto-unlock already attempted for this lock session")
+        // Bounded attempts per lock session.
+        if attemptsThisLockSession >= Self.maxAttemptsPerLockSession {
+            EventLogger.shared.info(
+                category: "AutoUnlock",
+                "Auto-unlock exhausted for this lock session (\(attemptsThisLockSession) attempts)"
+            )
             return
         }
         if let last = lastAttemptDate, Date().timeIntervalSince(last) < Self.minRetryInterval {
@@ -326,10 +348,12 @@ final class AutoUnlockController: ObservableObject {
             usleep(40_000)
 
             DispatchQueue.main.async {
-                self.hasAttemptedThisLockSession = true
+                self.attemptsThisLockSession += 1
+                EventLogger.shared.success(
+                    category: "AutoUnlock",
+                    "Auto-unlock keystroke sequence posted (attempt \(self.attemptsThisLockSession) of \(Self.maxAttemptsPerLockSession))"
+                )
             }
-
-            EventLogger.shared.success(category: "AutoUnlock", "Auto-unlock keystroke sequence posted")
         }
     }
 
@@ -342,7 +366,8 @@ final class AutoUnlockController: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.hasAttemptedThisLockSession = false
+            self?.attemptsThisLockSession = 0
+            self?.lastAttemptDate = nil
             EventLogger.shared.info(category: "AutoUnlock", "Screen locked — auto-unlock re-armed")
         }
 
@@ -351,7 +376,8 @@ final class AutoUnlockController: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.hasAttemptedThisLockSession = false
+            self?.attemptsThisLockSession = 0
+            self?.lastAttemptDate = nil
         }
     }
 
