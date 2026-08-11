@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# JetBrains GitLink plugin: machine-local host UUID, meaningless in a clone.
+/.idea/GitLink.xml
