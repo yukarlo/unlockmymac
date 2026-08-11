@@ -200,7 +200,12 @@ final class StatusMenuController: NSObject {
     private var adapterStatusTitle: String {
         switch bleCentral.adapterState {
         case .poweredOn:
-            return bleCentral.isScanning ? "Bluetooth: Scanning" : "Bluetooth: Ready"
+            if bleCentral.isScanning {
+                return "Bluetooth: Scanning"
+            }
+            // Not scanning while unlocked is the normal resting state now, not a fault —
+            // say so, or the menu reads as broken during ordinary use.
+            return "Bluetooth: Idle (unlocks when locked)"
         case .poweredOff:
             return "Bluetooth: Off"
         case .unauthorized:

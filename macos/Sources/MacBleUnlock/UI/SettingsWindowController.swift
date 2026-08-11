@@ -21,21 +21,20 @@ struct SettingsView: View {
                     }
                     Slider(value: $stateMachine.nearRSSIThreshold, in: -90...(-40), step: 1)
 
-                    HStack {
-                        Text("Far Threshold (dBm):")
-                        Spacer()
-                        Text("\(Int(stateMachine.farRSSIThreshold)) dBm")
-                            .bold()
-                    }
-                    Slider(value: $stateMachine.farRSSIThreshold, in: -100...(-50), step: 1)
+                    // The Far Threshold slider is gone: it only drove proximity auto-lock, which
+                    // has been removed. The Mac now scans solely while locked, and relies on
+                    // macOS's own idle lock to secure the session.
 
                     HStack {
-                        Text("Absence Grace Window:")
+                        Text("Signal Loss Grace:")
                         Spacer()
                         Text("\(Int(stateMachine.absenceTimeoutSeconds)) seconds")
                             .bold()
                     }
                     Slider(value: $stateMachine.absenceTimeoutSeconds, in: 5...60, step: 1)
+                    Text("How long a gap in the phone's signal is tolerated before giving up and re-acquiring. Does not lock the Mac.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 .padding(.vertical, 4)
             }
