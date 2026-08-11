@@ -9,13 +9,34 @@ final class SystemActionController: ObservableObject {
 
     private var notificationTokens: [NSObjectProtocol] = []
 
+    private var reconcileTimer: Timer?
+
     init() {
         updateScreenLockState()
         observeScreenLockNotifications()
+        startLockStateReconciliation()
     }
 
     deinit {
         notificationTokens.forEach { DistributedNotificationCenter.default().removeObserver($0) }
+        reconcileTimer?.invalidate()
+    }
+
+    /// Keeps `isScreenLocked` honest against the session dictionary.
+    ///
+    /// The lock/unlock distributed notifications are edges, and they do not always come in
+    /// pairs: a screensaver or display sleep can raise `com.apple.screenIsLocked` without the
+    /// session ever truly locking, so no `com.apple.screenIsUnlocked` follows and the flag
+    /// sticks `true` for the rest of the process. Everything gated on "locked" — the heartbeat,
+    /// the re-authentication observer, auto-unlock — then runs forever against an unlocked Mac.
+    ///
+    /// `CGSessionCopyCurrentDictionary()` is the authoritative state, so poll it and correct.
+    private func startLockStateReconciliation() {
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+            self?.updateScreenLockState()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        reconcileTimer = timer
     }
 
     /// Asserts that a logged-in user desktop session is active (not at pre-boot/loginwindow/FileVault).
@@ -32,7 +53,14 @@ final class SystemActionController: ObservableObject {
         if let dict = CGSessionCopyCurrentDictionary() as? [String: Any] {
             let locked = (dict["CGSSessionScreenIsLocked"] as? Bool) ?? false
             DispatchQueue.main.async { [weak self] in
-                self?.isScreenLocked = locked
+                guard let self, self.isScreenLocked != locked else { return }
+                // Only assign on a real change: @Published emits on every assignment, and the
+                // re-authentication observer treats each `true` emission as a fresh lock event.
+                self.isScreenLocked = locked
+                EventLogger.shared.info(
+                    category: "System",
+                    "Lock state corrected from session: \(locked ? "locked" : "unlocked")"
+                )
             }
         }
     }
