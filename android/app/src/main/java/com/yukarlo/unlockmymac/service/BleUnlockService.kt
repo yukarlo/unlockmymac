@@ -155,7 +155,19 @@ class BleUnlockService :
         teardownRadio()
         appContainer.status.setServiceRunning(false)
         UnlockNotifications.cancelApproval(this)
-        appContainer.eventLog.info("Service stopped")
+
+        if (stopRequestedByUser) {
+            stopRequestedByUser = false
+            appContainer.eventLog.info("Service stopped — turned off in the app")
+        } else {
+            // Nobody asked for this. Most often an OEM battery manager; also seen on app
+            // update and low-memory kills. Worth a warning: the Mac silently stops unlocking
+            // and there is nothing else in the log to explain it.
+            appContainer.eventLog.warn(
+                "Service stopped unexpectedly — killed by the system. " +
+                    "Check battery optimisation and Samsung's Sleeping apps list.",
+            )
+        }
         super.onDestroy()
     }
 
@@ -297,7 +309,19 @@ class BleUnlockService :
             context.startForegroundService(Intent(context, BleUnlockService::class.java))
         }
 
+        /**
+         * Set immediately before a deliberate stop so [onDestroy] can tell a user action apart
+         * from the system killing us.
+         *
+         * `onDestroy` fires identically for a toggle, an OEM battery-manager kill, and an app
+         * update, and a single "Service stopped" line for all three makes the log useless
+         * exactly when something has gone wrong. Same process, so a companion flag is reliable.
+         */
+        @Volatile
+        private var stopRequestedByUser = false
+
         fun stop(context: Context) {
+            stopRequestedByUser = true
             context.stopService(Intent(context, BleUnlockService::class.java))
         }
 

@@ -109,7 +109,10 @@ class HomeViewModel(
         viewModelScope.launch {
             val current = container.settings.settings.first()
             if (current.serviceEnabled && !container.status.status.value.serviceRunning) {
-                container.eventLog.info("Service was not running; restarting from saved setting")
+                // Reaching here means the switch says ON but nothing was running — the service
+                // died while the app was closed. A warning, not a note: it is the only trace of
+                // a kill that happened with no UI open to log it.
+                container.eventLog.warn("Service was not running despite being enabled; restarting")
                 BleUnlockService.start(app)
             }
         }
@@ -129,13 +132,21 @@ class HomeViewModel(
             return
         }
         viewModelScope.launch {
+            // Log the intent, not just the effect. Without this the only trace is the service
+            // dying, which looks identical to being killed.
+            container.eventLog.info(
+                if (enabled) "Discoverable turned ON by user" else "Discoverable turned OFF by user",
+            )
             container.settings.setServiceEnabled(enabled)
             if (enabled) BleUnlockService.start(app) else BleUnlockService.stop(app)
         }
     }
 
     fun setPaused(paused: Boolean) {
-        viewModelScope.launch { container.settings.setPaused(paused) }
+        viewModelScope.launch {
+            container.eventLog.info(if (paused) "Paused by user" else "Resumed by user")
+            container.settings.setPaused(paused)
+        }
     }
 
     fun setRequireApproval(required: Boolean) {
