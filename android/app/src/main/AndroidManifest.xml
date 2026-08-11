@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature
+            android:name="android.hardware.bluetooth_le"
+            android:required="true"/>
+    <uses-feature
+            android:name="android.hardware.camera.any"
+            android:required="false"/>
+
+    <!-- Peripheral role only: we advertise and serve GATT. We never scan, so
+         BLUETOOTH_SCAN and ACCESS_FINE_LOCATION are deliberately not requested. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Used only by the pairing screen to scan the Mac's QR code. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <application
+            android:name=".UnlockMyMacApp"
+            android:allowBackup="false"
+            android:dataExtractionRules="@xml/data_extraction_rules"
+            android:fullBackupContent="@xml/backup_rules"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:supportsRtl="true"
+            android:theme="@style/Theme.UnlockMyMac">
+        <activity
+                android:name=".MainActivity"
+                android:exported="true"
+                android:theme="@style/Theme.UnlockMyMac">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <service
+                android:name=".service.BleUnlockService"
+                android:exported="false"
+                android:foregroundServiceType="connectedDevice"/>
+
+        <receiver
+                android:name=".service.ApprovalActionReceiver"
+                android:exported="false"/>
+    </application>
+
+</manifest>
