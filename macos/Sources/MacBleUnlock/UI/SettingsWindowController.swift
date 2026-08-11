@@ -10,9 +10,15 @@ struct SettingsView: View {
     @State private var statusMessage: String?
 
     var body: some View {
-        Form {
-            Section(header: Text("Proximity Calibration").font(.headline)) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Section: Proximity Calibration
                 VStack(alignment: .leading, spacing: 8) {
+                    Text("Proximity Calibration")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 4)
+
                     HStack {
                         Text("Near Threshold (dBm):")
                         Spacer()
@@ -23,10 +29,6 @@ struct SettingsView: View {
                     Text("The Bluetooth signal strength required to trigger auto-unlock. Higher values (closer to -40 dBm) require the phone to be closer to your Mac.")
                         .font(.caption)
                         .foregroundColor(.secondary)
-
-                    // The Far Threshold slider is gone: it only drove proximity auto-lock, which
-                    // has been removed. The Mac now scans solely while locked, and relies on
-                    // macOS's own idle lock to secure the session.
 
                     HStack {
                         Text("Signal Loss Grace:")
@@ -39,13 +41,16 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .padding(.vertical, 4)
-            }
 
-            Divider()
+                Divider()
 
-            Section(header: Text("Auto-Unlock Credentials").font(.headline)) {
+                // Section: Auto-Unlock Credentials
                 VStack(alignment: .leading, spacing: 12) {
+                    Text("Auto-Unlock Credentials")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 4)
+
                     Toggle("Enable Auto-Unlock on Proximity", isOn: $autoUnlockController.isEnabled)
                         .bold()
 
@@ -96,11 +101,10 @@ struct SettingsView: View {
                         }
                     }
                 }
-                .padding(.vertical, 4)
             }
+            .padding()
         }
-        .padding()
-        .frame(width: 440, height: 420)
+        .frame(width: 440, height: 460)
         .onAppear {
             autoUnlockController.checkAccessibilityPermission()
         }
@@ -111,7 +115,7 @@ final class SettingsWindowController: NSWindowController {
     convenience init(stateMachine: PresenceStateMachine, autoUnlockController: AutoUnlockController) {
         let hostingView = NSHostingView(rootView: SettingsView(stateMachine: stateMachine, autoUnlockController: autoUnlockController))
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 460),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
