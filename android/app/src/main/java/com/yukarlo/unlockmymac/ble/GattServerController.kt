@@ -34,6 +34,15 @@ interface GattServerListener {
     /** A challenge is parked waiting for the user to tap Approve. */
     fun onApprovalRequested(pending: PendingChallenge)
 
+    /**
+     * A parked challenge is gone — expired, or its connection dropped.
+     *
+     * The notification must be withdrawn: a prompt whose challenge no longer exists does
+     * nothing when tapped, and the user is left believing they approved an unlock that never
+     * happened.
+     */
+    fun onApprovalNoLongerValid()
+
     /** The Mac completed a pairing read; persist the pairing. */
     fun onPaired(
         macInstallationId: String,
@@ -146,7 +155,14 @@ class GattServerController(
         id: Long,
         approved: Boolean,
     ) {
-        val pending = sessions.setApproval(id, approved) ?: return
+        val pending = sessions.setApproval(id, approved)
+        if (pending == null) {
+            // The challenge expired or its connection dropped before the user tapped. Say so —
+            // silently doing nothing is what made this look like the unlock had hung.
+            eventLog.warn("Approval arrived too late; that request is no longer valid")
+            listener.onApprovalNoLongerValid()
+            return
+        }
         val tag = challengeTag(pending.request.rawPayload)
         if (approved) {
             eventLog.info("Challenge $tag approved by user")
@@ -174,8 +190,13 @@ class GattServerController(
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         connected.remove(key)
                         // Everything tied to this connection dies with it: no cross-connection reuse.
+                        val hadPendingApproval =
+                            sessions.current(key)?.approval == ApprovalState.PENDING
                         sessions.remove(key)
                         stagedPairingResponse = null
+                        // The Mac is gone, so nothing will ever read the signature. Withdraw the
+                        // prompt rather than leave a button that silently does nothing.
+                        if (hadPendingApproval) listener.onApprovalNoLongerValid()
                     }
                 }
                 val count = connected.size
@@ -292,6 +313,8 @@ class GattServerController(
                 if (claim.reason != RejectReason.AWAITING_APPROVAL) {
                     eventLog.warn("Response read refused: ${claim.reason.name.lowercase()}")
                     status.recordAuth(AuthOutcome.REJECTED, "-", claim.reason.name.lowercase())
+                    // An expired challenge can still have a prompt on screen. Withdraw it.
+                    if (claim.reason == RejectReason.EXPIRED) listener.onApprovalNoLongerValid()
                 }
                 respond(device, requestId, gattStatus, offset, true)
             }

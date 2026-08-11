@@ -220,6 +220,11 @@ class BleUnlockService :
         }
     }
 
+    override fun onApprovalNoLongerValid() {
+        appContainer.status.setPendingApproval(null)
+        UnlockNotifications.cancelApproval(this)
+    }
+
     override fun onPaired(
         macInstallationId: String,
         macName: String,
