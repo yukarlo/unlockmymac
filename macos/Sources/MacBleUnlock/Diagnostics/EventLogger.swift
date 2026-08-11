@@ -1,5 +1,6 @@
-import Foundation
 import Combine
+import Foundation
+import os
 
 /// Diagnostic event severity.
 enum LogSeverity: String, Codable {
@@ -7,6 +8,14 @@ enum LogSeverity: String, Codable {
     case success = "SUCCESS"
     case warning = "WARN"
     case error = "ERROR"
+
+    var osLogType: OSLogType {
+        switch self {
+        case .info, .success: return .info
+        case .warning: return .default
+        case .error: return .error
+        }
+    }
 }
 
 /// A single diagnostic log entry.
@@ -43,11 +52,25 @@ final class EventLogger: ObservableObject {
     @Published private(set) var events: [LogEvent] = []
     private let queue = DispatchQueue(label: "com.karloyu.macbleunlock.eventlogger")
     private let maxEntries = 200
+    private let osLog = Logger(subsystem: "com.karloyu.macbleunlock", category: "Event")
 
     init() {}
 
     func log(severity: LogSeverity = .info, category: String, message: String) {
         let entry = LogEvent(severity: severity, category: category, message: message)
+
+        // Mirror to the unified log so events survive the app quitting and can be pulled with
+        // `log show` after the fact. The in-memory ring is only visible in the Diagnostics
+        // window while the app is running, which makes post-hoc debugging — especially of
+        // sleep, lock, and auto-unlock behaviour — impossible.
+        //
+        // Safe by construction: this logger never receives credentials, keys, challenges, or
+        // signatures (see the type comment), so `.public` does not expose anything sensitive.
+        osLog.log(
+            level: severity.osLogType,
+            "[\(category, privacy: .public)] \(message, privacy: .public)"
+        )
+
         queue.async { [weak self] in
             guard let self else { return }
             var updated = self.events
