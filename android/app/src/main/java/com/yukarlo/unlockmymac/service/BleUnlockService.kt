@@ -49,6 +49,10 @@ class BleUnlockService :
     @Volatile
     private var pairedMacInstallationId: String? = null
 
+    /** Friendly name of the paired Mac, shown as the ongoing notification's text. */
+    @Volatile
+    private var pairedMacName: String? = null
+
     @Volatile
     private var deviceId: String = ""
 
@@ -124,6 +128,9 @@ class BleUnlockService :
         lifecycleScope.launch {
             appContainer.pairing.pairedMac.collect { paired ->
                 pairedMacInstallationId = paired?.installationId
+                pairedMacName = paired?.name
+                // The name arrives asynchronously, so refresh the notification once it lands.
+                applyState()
             }
         }
     }
@@ -249,7 +256,9 @@ class BleUnlockService :
             return
         }
         advertiser.start(current.advertiseMode)
-        updateNotification(getString(R.string.notification_active))
+        updateNotification(
+            pairedMacName ?: getString(R.string.notification_active_unpaired),
+        )
     }
 
     private fun teardownRadio() {

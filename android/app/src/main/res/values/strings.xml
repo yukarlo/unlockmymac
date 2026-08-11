@@ -8,7 +8,7 @@
     <string name="channel_approval_desc">Asks you to approve each unlock request.</string>
     <string name="notification_ongoing_title">Mac unlock</string>
     <string name="notification_starting">Starting…</string>
-    <string name="notification_active">Discoverable by your Mac</string>
+    <string name="notification_active_unpaired">Not paired with a Mac</string>
     <string name="notification_paused">Paused</string>
     <string name="notification_disabled">Disabled</string>
     <string name="notification_error">Could not start Bluetooth</string>
