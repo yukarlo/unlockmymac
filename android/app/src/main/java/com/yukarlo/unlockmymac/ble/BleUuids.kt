@@ -39,4 +39,15 @@ object GattStatus {
      * hands it a free oracle.
      */
     const val REJECTED = 0x81
+
+    /**
+     * The user explicitly denied this request.
+     *
+     * Distinct from [REJECTED] so the Mac can stop asking instead of re-challenging seconds
+     * later and raising a fresh prompt. Safe to disclose: reaching the approval state already
+     * requires passing every validation check — paired Mac installation id, our own device id,
+     * a fresh timestamp and a non-replayed challenge — so only the genuine paired Mac ever sees
+     * this code. Everything else stays behind the opaque [REJECTED].
+     */
+    const val DENIED = 0x82
 }

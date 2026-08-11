@@ -305,10 +305,13 @@ class GattServerController(
         when (val claim = sessions.claimForSigning(device.address)) {
             is ChallengeSessions.Result.Refused -> {
                 val gattStatus =
-                    if (claim.reason == RejectReason.AWAITING_APPROVAL) {
-                        GattStatus.PENDING_APPROVAL
-                    } else {
-                        GattStatus.REJECTED
+                    when (claim.reason) {
+                        RejectReason.AWAITING_APPROVAL -> GattStatus.PENDING_APPROVAL
+
+                        // Tell the Mac this was a deliberate "no" so it stops re-challenging.
+                        RejectReason.DENIED_BY_USER -> GattStatus.DENIED
+
+                        else -> GattStatus.REJECTED
                     }
                 if (claim.reason != RejectReason.AWAITING_APPROVAL) {
                     eventLog.warn("Response read refused: ${claim.reason.name.lowercase()}")

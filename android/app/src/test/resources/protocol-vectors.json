@@ -13,8 +13,14 @@
     "pairingCharacteristic": "f9a2b8e3-54cd-4e92-a123-765432198768"
   },
   "gattStatus": {
+    "_comment": [
+      "128 = waiting on the user; the central should retry within its auth timeout.",
+      "130 = the user said no; the central must back off, not re-challenge.",
+      "129 = everything else, deliberately opaque so a stranger learns nothing."
+    ],
     "pendingApproval": 128,
     "rejected": 129,
+    "denied": 130,
     "invalidOffset": 7
   },
   "identity": {

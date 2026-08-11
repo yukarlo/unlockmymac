@@ -40,6 +40,7 @@ class ProtocolVectorsTest {
         val status = vectors.getJSONObject("gattStatus")
         assertEquals(status.getInt("pendingApproval"), GattStatus.PENDING_APPROVAL)
         assertEquals(status.getInt("rejected"), GattStatus.REJECTED)
+        assertEquals(status.getInt("denied"), GattStatus.DENIED)
     }
 
     @Test
