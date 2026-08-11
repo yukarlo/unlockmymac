@@ -303,6 +303,11 @@ extension BLECentralManager: CBCentralManagerDelegate {
             // The stack drops the scan when the adapter leaves poweredOn; forget the mode so
             // the next start actually issues a fresh scanForPeripherals.
             queue.async { [weak self] in self?.activeAllowDuplicates = nil }
+
+            // Every connection died with the radio. Say so explicitly — CoreBluetooth does not
+            // reliably deliver a disconnect here, and an in-flight session that keeps its
+            // peripheral blocks all later attempts with `sessionAlreadyInProgress`.
+            connectionDelegate?.bleCentralDidInvalidateConnections(self)
         }
     }
 

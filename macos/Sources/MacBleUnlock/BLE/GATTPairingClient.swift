@@ -106,6 +106,18 @@ extension GATTPairingClient: BLEPeripheralConnectionDelegate {
         finish(.failure(error ?? NSError(domain: "GATTPairingClient", code: -2)), for: peripheral, disconnect: false)
     }
 
+    func bleCentralDidInvalidateConnections(_ manager: BLECentralManager) {
+        guard let peripheral = activePeripheral else { return }
+        log.info("Radio invalidated all connections; abandoning pairing exchange")
+        finish(
+            .failure(NSError(domain: "GATTPairingClient", code: -10, userInfo: [
+                NSLocalizedDescriptionKey: "Bluetooth became unavailable during pairing",
+            ])),
+            for: peripheral,
+            disconnect: false
+        )
+    }
+
     func bleCentral(_ manager: BLECentralManager, didDisconnect peripheral: CBPeripheral, error: Error?) {
         guard peripheral === activePeripheral else { return }
         finish(.failure(error ?? NSError(domain: "GATTPairingClient", code: -3)), for: peripheral, disconnect: false)

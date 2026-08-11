@@ -89,6 +89,7 @@ final class PresenceStateMachine: ObservableObject {
     private var heartbeatTimer: Timer?
     private var absenceTimer: Timer?
     private var wakeObserverToken: NSObjectProtocol?
+    private var sleepObserverToken: NSObjectProtocol?
     private var lastHeartbeatAuthDate: Date?
 
     /// How stale an advertisement may be before the phone counts as gone.
@@ -133,7 +134,9 @@ final class PresenceStateMachine: ObservableObject {
 
     deinit {
         // Block-based observers are keyed by their token, not by `self`.
-        wakeObserverToken.map(NSWorkspace.shared.notificationCenter.removeObserver)
+        let center = NSWorkspace.shared.notificationCenter
+        wakeObserverToken.map(center.removeObserver)
+        sleepObserverToken.map(center.removeObserver)
     }
 
     /// Drops the pre-sleep view of the world on wake.
@@ -142,12 +145,28 @@ final class PresenceStateMachine: ObservableObject {
     /// handle by the time we wake, so resuming the old state would mean re-acquiring against
     /// stale data — and possibly sitting in a backoff inherited from before the sleep.
     private func observeSystemWake() {
+        // Sleeping mid-handshake is normal — an approval prompt in particular waits on a human.
+        // Abandon the session explicitly so the state machine and the GATT client cannot end up
+        // disagreeing about whether one is running.
+        sleepObserverToken = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, self.gattClient.isBusy else { return }
+            EventLogger.shared.info(category: "State", "Sleeping — abandoning in-flight handshake")
+            self.gattClient.cancel()
+        }
+
         wakeObserverToken = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
+            // Belt and braces: if a session somehow survived the sleep, drop it before
+            // resetting state, or the two will disagree and every later handshake is refused.
+            if self.gattClient.isBusy { self.gattClient.cancel() }
             // Only relevant while locked — that is the only time the radio is up.
             guard self.systemActionController.isScreenLocked else { return }
             self.lastAuthFailureDate = nil
@@ -237,6 +256,11 @@ final class PresenceStateMachine: ObservableObject {
                 return
             }
 
+            // A handshake already running is not a reason to start another; asking anyway
+            // returns `sessionAlreadyInProgress`, which used to be logged as an auth failure
+            // and reset the state — thrashing until the in-flight session timed out.
+            if gattClient.isBusy { return }
+
             if averageRSSI >= nearRSSIThreshold {
                 EventLogger.shared.info(category: "State", "Discovered candidate phone nearby (\(String(format: "%.1f", averageRSSI)) dBm)")
                 transitionTo(.candidateNear)
@@ -315,6 +339,12 @@ final class PresenceStateMachine: ObservableObject {
                     EventLogger.shared.error(category: "Auth", "Authentication failed (invalid signature proof)")
                     self.transitionTo(.absent)
                 }
+            case .failure(.sessionAlreadyInProgress):
+                // Not a failure: another handshake owns the radio and will report its own
+                // result. Resetting the state here is what caused the thrash loop — it made
+                // the state machine believe it was idle and immediately try again.
+                self.log.info("Handshake already in progress; leaving the running one alone")
+
             case .failure(let error):
                 self.lastAuthFailureDate = Date()
                 self.lastFailureWasTransport = error.isTransportLevel

@@ -27,11 +27,14 @@ enum GATTChallengeError: Error, CustomStringConvertible {
     /// the long backoff.
     var isTransportLevel: Bool {
         switch self {
-        case .sessionAlreadyInProgress, .timedOut, .connectionFailed, .disconnected,
+        case .timedOut, .connectionFailed, .disconnected,
              .serviceDiscoveryFailed, .serviceNotFound, .characteristicDiscoveryFailed,
              .characteristicNotFound, .writeFailed, .readFailed, .emptyResponse:
             return true
-        case .randomBytesUnavailable, .invalidSignature, .missingPairingData:
+        // `sessionAlreadyInProgress` is not a failure at all — the caller treats it as a no-op
+        // before it reaches any backoff. Listed here only so this switch stays exhaustive.
+        case .sessionAlreadyInProgress,
+             .randomBytesUnavailable, .invalidSignature, .missingPairingData:
             return false
         }
     }
@@ -80,6 +83,12 @@ final class GATTChallengeClient: NSObject {
     private let log = Logger(subsystem: "com.karloyu.macbleunlock", category: "GATTChallengeClient")
 
     private var activePeripheral: CBPeripheral?
+
+    /// Whether a handshake is already running. Callers should check this rather than firing a
+    /// request and treating the resulting `sessionAlreadyInProgress` as a failure.
+    var isBusy: Bool {
+        bleCentral.queue.sync { activePeripheral != nil }
+    }
     private var responseCharacteristic: CBCharacteristic?
     private var activeRequestPayload: Data?
     private var completion: Completion?
@@ -278,6 +287,13 @@ extension GATTChallengeClient: BLEPeripheralConnectionDelegate {
         guard !isRetryingConnect else { return }
         EventLogger.shared.error(category: "GATT", "Connection failed: \(error?.localizedDescription ?? "unknown")")
         finish(.failure(.connectionFailed(error)), for: peripheral, disconnect: false)
+    }
+
+    func bleCentralDidInvalidateConnections(_ manager: BLECentralManager) {
+        guard let peripheral = activePeripheral else { return }
+        log.info("Radio invalidated all connections; abandoning in-flight handshake")
+        EventLogger.shared.info(category: "GATT", "Bluetooth went away — abandoning handshake")
+        finish(.failure(.disconnected(nil)), for: peripheral, disconnect: false)
     }
 
     func bleCentral(_ manager: BLECentralManager, didDisconnect peripheral: CBPeripheral, error: Error?) {
