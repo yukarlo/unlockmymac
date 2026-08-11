@@ -137,7 +137,7 @@ struct KeyCodeMapper {
         let keyLayout = keyLayoutPtr.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { $0 }
 
         var deadKeyState: UInt32 = 0
-        var maxStringLength = 4
+        let maxStringLength = 4
         var actualStringLength = 0
         var unicodeString = [UniChar](repeating: 0, count: maxStringLength)
 
@@ -208,6 +208,12 @@ final class AutoUnlockController: ObservableObject {
 
     /// Gap between synthesised keystrokes (8ms for fast typing without dropping keys).
     private static let keystrokeIntervalMicros: UInt32 = 8_000
+
+    /// How long to wait for a sleeping display to light up before abandoning this attempt.
+    private static let displayWakeTimeout: TimeInterval = 4.0
+
+    /// Settle time after the display reports awake, before the login window accepts input.
+    private static let displaySettleMicros: UInt32 = 700_000
 
     init() {
         self.isEnabled = UserDefaults.standard.bool(forKey: enabledKey)
@@ -289,6 +295,22 @@ final class AutoUnlockController: ObservableObject {
             self.postVirtualKey(Self.keyEscape)
             usleep(80_000)
 
+            // Step 1b: Wait for the display to actually be awake.
+            //
+            // A sleeping display takes 0.5-2s to light up and present a ready password field.
+            // Typing 80ms after the wake keystroke sends the password into nothing — which is
+            // exactly what happens when the Mac locks and the screen then times off.
+            guard self.waitForDisplayAwake() else {
+                // Do NOT consume the attempt: nothing was typed, so a retry is not a repeated
+                // password guess. Clearing lastAttemptDate lets the next heartbeat try again.
+                EventLogger.shared.warning(
+                    category: "AutoUnlock",
+                    "Display did not wake in time; skipping unlock without using this session's attempt"
+                )
+                DispatchQueue.main.async { self.lastAttemptDate = nil }
+                return
+            }
+
             // Step 2: Clear anything in the password field (Cmd+A with physical Cmd key, then Delete)
             self.postVirtualKey(Self.keyA, flags: .maskCommand)
             usleep(30_000)
@@ -349,6 +371,24 @@ final class AutoUnlockController: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
+    }
+
+    /// Blocks until the main display reports awake, or the deadline passes.
+    ///
+    /// Called off the main thread from the keystroke sequence. Returns false if the display
+    /// never woke, in which case the caller must not type — the login window is not ready and
+    /// the keystrokes would be discarded.
+    private func waitForDisplayAwake() -> Bool {
+        let deadline = Date().addingTimeInterval(Self.displayWakeTimeout)
+        while Date() < deadline {
+            if CGDisplayIsAsleep(CGMainDisplayID()) == 0 {
+                // Awake, but the login window still needs a moment to accept input.
+                usleep(Self.displaySettleMicros)
+                return true
+            }
+            usleep(100_000)
+        }
+        return CGDisplayIsAsleep(CGMainDisplayID()) == 0
     }
 
     private func postPassword(_ string: String) {
