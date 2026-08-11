@@ -1,0 +1,48 @@
+package com.yukarlo.unlockmymac
+
+import android.app.Application
+import android.content.Context
+import android.os.SystemClock
+import com.yukarlo.unlockmymac.ble.ChallengeSessions
+import com.yukarlo.unlockmymac.ble.ElapsedClock
+import com.yukarlo.unlockmymac.crypto.KeystoreSigner
+import com.yukarlo.unlockmymac.data.BleStatusRepository
+import com.yukarlo.unlockmymac.data.EventLog
+import com.yukarlo.unlockmymac.data.PairingRepository
+import com.yukarlo.unlockmymac.data.SettingsRepository
+import com.yukarlo.unlockmymac.pairing.PairingCoordinator
+import com.yukarlo.unlockmymac.service.UnlockNotifications
+
+class UnlockMyMacApp : Application() {
+    lateinit var container: AppContainer
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        container = AppContainer(this)
+        UnlockNotifications.createChannels(this)
+    }
+}
+
+/**
+ * Hand-rolled service locator. The graph is a handful of singletons with no configuration, so
+ * a DI framework would add build time and indirection without buying anything.
+ */
+class AppContainer(
+    context: Context,
+) {
+    private val appContext = context.applicationContext
+
+    val settings = SettingsRepository(appContext)
+    val pairing = PairingRepository(appContext)
+    val status = BleStatusRepository()
+    val eventLog = EventLog(appContext)
+    val signer = KeystoreSigner()
+    val pairingCoordinator = PairingCoordinator()
+
+    /** Session state lives here, not in the service, so it survives service restarts intact. */
+    val sessions = ChallengeSessions(ElapsedClock { SystemClock.elapsedRealtime() })
+}
+
+val Context.container: AppContainer
+    get() = (applicationContext as UnlockMyMacApp).container
