@@ -19,6 +19,23 @@ enum GATTChallengeError: Error, CustomStringConvertible {
     case invalidSignature
     case missingPairingData
 
+    /// True for link-level problems that say nothing about the peer's identity.
+    ///
+    /// These are routine — Android rotates its private address on every `startAdvertising`, so
+    /// stale handles and stalled connects are expected. They warrant a short retry backoff.
+    /// Anything else (above all `invalidSignature`) is treated as security-relevant and keeps
+    /// the long backoff.
+    var isTransportLevel: Bool {
+        switch self {
+        case .sessionAlreadyInProgress, .timedOut, .connectionFailed, .disconnected,
+             .serviceDiscoveryFailed, .serviceNotFound, .characteristicDiscoveryFailed,
+             .characteristicNotFound, .writeFailed, .readFailed, .emptyResponse:
+            return true
+        case .randomBytesUnavailable, .invalidSignature, .missingPairingData:
+            return false
+        }
+    }
+
     var description: String {
         switch self {
         case .sessionAlreadyInProgress:

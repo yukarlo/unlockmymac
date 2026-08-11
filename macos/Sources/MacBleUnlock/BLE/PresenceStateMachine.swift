@@ -1,6 +1,8 @@
+import AppKit
 import Combine
 import CoreBluetooth
 import Foundation
+import os
 
 /// Presence state machine states per Section 6.3 of the implementation plan.
 enum PresenceState: String, CustomStringConvertible {
@@ -69,9 +71,25 @@ final class PresenceStateMachine: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     @Published private(set) var authenticatedPeripheralId: UUID?
     private var lastAuthFailureDate: Date?
+
+    /// Whether the last failure was a link problem rather than a rejected proof.
+    private var lastFailureWasTransport = false
+
+    /// Backoff after a rejected signature. Deliberately long — this is the path an attacker
+    /// would exercise, and it must not be retried in a tight loop.
     private let authBackoffSeconds: TimeInterval = 10
+
+    /// Backoff after a connection stall, timeout, or disconnect. These are benign and common
+    /// (Android rotates its address constantly), so retrying quickly is the right behaviour.
+    private let transportBackoffSeconds: TimeInterval = 3
+
+    private var currentBackoffSeconds: TimeInterval {
+        lastFailureWasTransport ? transportBackoffSeconds : authBackoffSeconds
+    }
     private var heartbeatTimer: Timer?
     private var absenceTimer: Timer?
+    private var wakeObserverToken: NSObjectProtocol?
+    private let log = Logger(subsystem: "com.karloyu.macbleunlock", category: "PresenceStateMachine")
 
     init(
         bleCentral: BLECentralManager,
@@ -88,14 +106,41 @@ final class PresenceStateMachine: ObservableObject {
 
         observeDiscoveredPeripherals()
         observeScreenLockState()
+        observeSystemWake()
+    }
+
+    deinit {
+        // Block-based observers are keyed by their token, not by `self`.
+        wakeObserverToken.map(NSWorkspace.shared.notificationCenter.removeObserver)
+    }
+
+    /// Drops the pre-sleep view of the world on wake.
+    ///
+    /// Timers do not fire while the system is asleep and every discovered peripheral is a dead
+    /// handle by the time we wake, so resuming the old state would mean re-acquiring against
+    /// stale data — and possibly sitting in a backoff inherited from before the sleep.
+    private func observeSystemWake() {
+        wakeObserverToken = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.lastAuthFailureDate = nil
+            self.lastFailureWasTransport = false
+            self.authenticatedPeripheralId = nil
+            if self.currentState != .absent {
+                self.transitionTo(.absent)
+            }
+        }
     }
 
     /// Primary evaluation hook triggered on discovery / RSSI updates from `BLECentralManager`.
     private func observeDiscoveredPeripherals() {
         bleCentral.$discoveredPeripherals
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] peripherals in
-                self?.evaluatePresence(peripherals: peripherals)
+            .sink { [weak self] _ in
+                self?.evaluatePresence()
             }
             .store(in: &cancellables)
     }
@@ -124,7 +169,7 @@ final class PresenceStateMachine: ObservableObject {
             .store(in: &cancellables)
     }
 
-    private func evaluatePresence(peripherals: [UUID: DiscoveredPeripheral]) {
+    private func evaluatePresence() {
         guard !isPaused, let paired = pairingManager.pairedDevice else {
             if currentState != .absent {
                 transitionTo(.absent)
@@ -132,19 +177,10 @@ final class PresenceStateMachine: ObservableObject {
             return
         }
 
-        // If locked onto an authenticated paired peripheral, target that specific UUID; otherwise fallback to candidate
-        let pairedEntry: DiscoveredPeripheral?
-        if let targetId = authenticatedPeripheralId, let existing = peripherals[targetId] {
-            pairedEntry = existing
-        } else {
-            // Find candidate advertising peripheral with valid RSSI sample
-            pairedEntry = peripherals.values.first { entry in
-                guard let rssi = entry.averageRSSI else { return false }
-                return rssi >= nearRSSIThreshold
-            }
-        }
-
-        guard let entry = pairedEntry, let averageRSSI = entry.averageRSSI else {
+        // Same freshness-aware selection the heartbeat and lock paths use. Picking an entry
+        // without checking `lastSeenAt` can latch a rotated-away address, and connecting to a
+        // dead address stalls for the full watchdog budget instead of failing fast.
+        guard let entry = currentTarget(), let averageRSSI = entry.averageRSSI else {
             handleMissingPeripheral()
             return
         }
@@ -154,7 +190,7 @@ final class PresenceStateMachine: ObservableObject {
         switch currentState {
         case .absent:
             // Check auth failure backoff cooldown to prevent tight retry loops
-            if let lastFail = lastAuthFailureDate, Date().timeIntervalSince(lastFail) < authBackoffSeconds {
+            if let lastFail = lastAuthFailureDate, Date().timeIntervalSince(lastFail) < currentBackoffSeconds {
                 return
             }
 
@@ -234,11 +270,14 @@ final class PresenceStateMachine: ObservableObject {
                     self.onAuthenticationSuccess()
                 } else {
                     self.lastAuthFailureDate = Date()
+                    // A bad signature is the security-relevant path: always the long backoff.
+                    self.lastFailureWasTransport = false
                     EventLogger.shared.error(category: "Auth", "Authentication failed (invalid signature proof)")
                     self.transitionTo(.absent)
                 }
             case .failure(let error):
                 self.lastAuthFailureDate = Date()
+                self.lastFailureWasTransport = error.isTransportLevel
                 EventLogger.shared.error(category: "Auth", "Authentication failed: \(error.description)")
                 self.transitionTo(.absent)
             }
@@ -327,6 +366,9 @@ final class PresenceStateMachine: ObservableObject {
         let oldState = currentState
         currentState = newState
         EventLogger.shared.info(category: "State", "Presence state changed: \(oldState) → \(newState)")
+        // Also to the unified log, so state changes can be correlated with GATT timings in a
+        // `log stream` capture rather than only being visible in the in-app Diagnostics window.
+        log.info("State \(oldState.rawValue, privacy: .public) → \(newState.rawValue, privacy: .public)")
 
         if newState == .absent {
             stopHeartbeatTimer()
