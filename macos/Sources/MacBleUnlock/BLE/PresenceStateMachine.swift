@@ -296,8 +296,14 @@ final class PresenceStateMachine: ObservableObject {
 
         // Assert valid user session before executing wake / auto-unlock
         if systemActionController.isUserSessionActive {
-            systemActionController.wakeDisplay()
-            if systemActionController.isScreenLocked {
+            let locked = systemActionController.isScreenLocked
+            // Wake on approach when the session is open, or when locked and we can still act.
+            // Waking a locked Mac we cannot unlock only burns battery: `caffeinate -u` resets
+            // the system idle timer, so it would also stop the Mac ever reaching sleep.
+            if !locked || autoUnlockController.hasAttemptsRemaining {
+                systemActionController.wakeDisplay()
+            }
+            if locked {
                 autoUnlockController.attemptAutoUnlock()
             }
         } else {
@@ -364,7 +370,14 @@ final class PresenceStateMachine: ObservableObject {
                     guard let self else { return }
                     switch result {
                     case .success(let verified):
-                        if verified && self.systemActionController.isScreenLocked {
+                        // Only wake the display if we can actually act on it. `caffeinate -u`
+                        // asserts user activity, so waking on every beat resets the system idle
+                        // timer and the Mac can never reach sleep while the phone is nearby —
+                        // draining the battery and flapping the display on and off, even when
+                        // auto-unlock is disabled or its attempts are spent.
+                        if verified,
+                           self.systemActionController.isScreenLocked,
+                           self.autoUnlockController.hasAttemptsRemaining {
                             EventLogger.shared.info(category: "AutoUnlock", "Heartbeat verified phone presence while screen locked. Unlocking...")
                             self.systemActionController.wakeDisplay()
                             self.autoUnlockController.attemptAutoUnlock()
