@@ -89,6 +89,13 @@ final class PresenceStateMachine: ObservableObject {
     private var heartbeatTimer: Timer?
     private var absenceTimer: Timer?
     private var wakeObserverToken: NSObjectProtocol?
+    private var lastHeartbeatAuthDate: Date?
+
+    /// Heartbeat cadence while auto-unlock can still act on a verified presence.
+    private static let heartbeatActiveSeconds: TimeInterval = 10
+
+    /// Slower cadence once it cannot — presence is still confirmed, just less often.
+    private static let heartbeatIdleSeconds: TimeInterval = 30
     private let log = Logger(subsystem: "com.karloyu.macbleunlock", category: "PresenceStateMachine")
 
     init(
@@ -329,11 +336,25 @@ final class PresenceStateMachine: ObservableObject {
 
     private func startHeartbeatTimer() {
         heartbeatTimer?.invalidate()
+        // Fresh cycle: let the first beat fire without waiting out the previous cadence.
+        lastHeartbeatAuthDate = nil
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             guard let self,
                   self.currentState == .unlockCooldown,
                   self.systemActionController.isScreenLocked,
                   let paired = self.pairingManager.pairedDevice else { return }
+
+            // Back off once auto-unlock can no longer act. Each beat is a full
+            // connect/authenticate/disconnect, and every disconnect makes the phone restart
+            // advertising and rotate its address — 40 cycles in five minutes of being away,
+            // for no benefit once the attempts are spent.
+            let interval: TimeInterval = self.autoUnlockController.hasAttemptsRemaining
+                ? Self.heartbeatActiveSeconds
+                : Self.heartbeatIdleSeconds
+            if let last = self.lastHeartbeatAuthDate, Date().timeIntervalSince(last) < interval {
+                return
+            }
+            self.lastHeartbeatAuthDate = Date()
             if let entry = self.currentTarget() {
                 self.gattClient.authenticate(
                     peripheral: entry.peripheral,
