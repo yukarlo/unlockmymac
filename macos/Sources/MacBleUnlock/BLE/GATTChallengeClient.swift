@@ -416,7 +416,6 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             let nsError = error as NSError
             // 0x80 (128) is GATT status PENDING_APPROVAL returned when "Approve every request" is enabled on Android
             if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 128 {
-                log.notice("Phone is waiting for the user to approve; will re-read in 1.5s (ATT 0x80)")
                 EventLogger.shared.info(category: "Unlock", "Waiting for you to approve on your phone…")
 
                 // Arm 60s approval timeout once when approval pending is first encountered
@@ -426,7 +425,13 @@ extension GATTChallengeClient: CBPeripheralDelegate {
                     extendTimeoutForUserApproval()
                 }
 
-                bleCentral.queue.asyncAfter(deadline: .now() + approvalReadDelay()) { [weak self] in
+                // Computed once and used for both the log and the schedule: quoting a fixed
+                // interval here while the delay was adaptive meant every early poll logged a
+                // cadence six times slower than the one it actually used.
+                let delay = approvalReadDelay()
+                log.notice("Phone is waiting for the user to approve; will re-read in \(Int(delay * 1000))ms (ATT 0x80)")
+
+                bleCentral.queue.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self, self.activePeripheral === peripheral else { return }
                     peripheral.readValue(for: characteristic)
                 }
