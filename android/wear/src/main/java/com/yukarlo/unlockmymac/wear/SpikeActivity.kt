@@ -188,6 +188,57 @@ class SpikeActivity : Activity() {
             ) {
                 log("serviceAdded: status=$status")
             }
+
+            // Service discovery alone is answered by the Bluetooth stack from its own copy of the
+            // GATT database, with the app never involved — so it proves nothing about whether our
+            // server code runs. A characteristic read has to come here or it cannot be answered,
+            // which makes this the callback that actually decides whether the port is possible.
+            @SuppressLint("MissingPermission")
+            override fun onCharacteristicReadRequest(
+                device: BluetoothDevice?,
+                requestId: Int,
+                offset: Int,
+                characteristic: BluetoothGattCharacteristic?,
+            ) {
+                log("READ REQUEST ${characteristic?.uuid.toString().takeLast(4)} offset=$offset")
+                if (device == null) return
+                gattServer?.sendResponse(
+                    device,
+                    requestId,
+                    android.bluetooth.BluetoothGatt.GATT_SUCCESS,
+                    offset,
+                    "wear-spike".toByteArray(),
+                )
+            }
+
+            @SuppressLint("MissingPermission")
+            override fun onCharacteristicWriteRequest(
+                device: BluetoothDevice?,
+                requestId: Int,
+                characteristic: BluetoothGattCharacteristic?,
+                preparedWrite: Boolean,
+                responseNeeded: Boolean,
+                offset: Int,
+                value: ByteArray?,
+            ) {
+                log("WRITE REQUEST ${characteristic?.uuid.toString().takeLast(4)} ${value?.size ?: 0}B")
+                if (responseNeeded && device != null) {
+                    gattServer?.sendResponse(
+                        device,
+                        requestId,
+                        android.bluetooth.BluetoothGatt.GATT_SUCCESS,
+                        offset,
+                        null,
+                    )
+                }
+            }
+
+            override fun onMtuChanged(
+                device: BluetoothDevice?,
+                mtu: Int,
+            ) {
+                log("mtu: $mtu")
+            }
         }
 
     @SuppressLint("MissingPermission")
