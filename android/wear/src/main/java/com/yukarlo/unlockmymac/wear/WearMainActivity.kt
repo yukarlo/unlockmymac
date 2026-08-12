@@ -125,6 +125,18 @@ private fun WearHome() {
             secondaryLabel = { Text(if (enabled) "On" else "Off") },
         )
 
+        // Defaults to off, so without this the watch unlocks silently while the phone asks —
+        // a difference in what it takes to open the Mac that the wearer could not see or change.
+        val requireApproval = settings?.requireApproval == true
+        Chip(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = {
+                scope.launch { container.settings.setRequireApproval(!requireApproval) }
+            },
+            label = { Text(context.getString(R.string.home_require_approval)) },
+            secondaryLabel = { Text(if (requireApproval) "On" else "Off") },
+        )
+
         Text(
             text = if (status.advertising.name == "ADVERTISING") "Broadcasting" else status.advertising.name.lowercase(),
             style = MaterialTheme.typography.caption2,
