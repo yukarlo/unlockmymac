@@ -19,6 +19,14 @@ class ApprovalActionReceiver : BroadcastReceiver() {
                 ACTION_DENY -> false
                 else -> return
             }
+        val originNode = intent.getStringExtra(EXTRA_ORIGIN_NODE)
+        if (originNode != null) {
+            // This prompt was a copy of another device's challenge; we hold nothing to resolve.
+            ApprovalMirror.sendDecision(context, originNode, id, approved)
+            context.container.notifier.cancelApproval(context)
+            return
+        }
+
         // Routed through the service so approval and the GATT server share one instance.
         context.startService(
             Intent(context, BleUnlockService::class.java).apply {
@@ -34,5 +42,8 @@ class ApprovalActionReceiver : BroadcastReceiver() {
         const val ACTION_APPROVE = "com.yukarlo.unlockmymac.APPROVE"
         const val ACTION_DENY = "com.yukarlo.unlockmymac.DENY"
         const val EXTRA_CHALLENGE_ID = "challenge_id"
+
+        /** Set only on a mirrored prompt: the node whose challenge this actually is. */
+        const val EXTRA_ORIGIN_NODE = "origin_node"
     }
 }

@@ -56,6 +56,10 @@ class BleUnlockService :
     @Volatile
     private var deviceId: String = ""
 
+    /** The challenge currently being prompted for, so its mirrored copy can be withdrawn. */
+    @Volatile
+    private var promptedChallengeId: Long? = null
+
     private val bluetoothStateReceiver =
         object : BroadcastReceiver() {
             override fun onReceive(
@@ -159,7 +163,18 @@ class BleUnlockService :
             ACTION_RESOLVE_APPROVAL -> {
                 val id = intent.getLongExtra(EXTRA_CHALLENGE_ID, -1L)
                 val approved = intent.getBooleanExtra(EXTRA_APPROVED, false)
-                if (id >= 0) gattServer.resolveApproval(id, approved)
+                if (id >= 0) {
+                    gattServer.resolveApproval(id, approved)
+                    // The question has been answered; every copy of it is now stale. Without
+                    // this only the device that was tapped cleared its prompt, leaving the
+                    // other showing a request that had already been decided.
+                    container.notifier.cancelApproval(this)
+                    // Also the signal a full-screen approval UI watches: cancelling a
+                    // notification does nothing to an Activity already on screen.
+                    appContainer.status.setPendingApproval(null)
+                    ApprovalMirror.broadcastDismiss(this, id)
+                    promptedChallengeId = null
+                }
             }
 
             ACTION_FORCE_RESET -> {
@@ -211,6 +226,10 @@ class BleUnlockService :
             container.notifier.approvalNotificationId,
             container.notifier.approvalRequest(this, pending.id, pairedMacName),
         )
+        // After the local prompt, never before it: the mirror is a convenience and must not be
+        // able to delay or suppress the prompt on the device actually being challenged.
+        promptedChallengeId = pending.id
+        ApprovalMirror.broadcastRequest(this, pending.id, pairedMacName)
     }
 
     /**
@@ -243,6 +262,9 @@ class BleUnlockService :
     override fun onApprovalNoLongerValid() {
         appContainer.status.setPendingApproval(null)
         container.notifier.cancelApproval(this)
+        // Whether answered, expired or swept, the copy on the other device is now stale.
+        promptedChallengeId?.let { ApprovalMirror.broadcastDismiss(this, it) }
+        promptedChallengeId = null
     }
 
     override fun onPaired(

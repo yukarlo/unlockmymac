@@ -32,6 +32,8 @@ dependencies {
     api(libs.androidx.datastore.preferences)
     // BleUnlockService is a LifecycleService, and it lives here so a phone and a watch share it.
     api(libs.androidx.lifecycle.service)
+    // The approval mirror talks to the user's other device over the Wear Data Layer.
+    api(libs.play.services.wearable)
 
     testImplementation(libs.junit)
     // Real org.json for JVM unit tests; the android.jar stub throws "not mocked".

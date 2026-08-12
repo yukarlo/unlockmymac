@@ -68,6 +68,7 @@ object UnlockNotifications : UnlockNotifier {
         context: Context,
         challengeId: Long,
         macName: String?,
+        originNodeId: String?,
     ): Notification {
         val title =
             macName?.let { context.getString(R.string.notification_approval_title_mac, it) }
@@ -84,11 +85,11 @@ object UnlockNotifications : UnlockNotifier {
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
                 context.getString(R.string.action_deny),
-                approvalAction(context, challengeId, approved = false),
+                approvalAction(context, challengeId, approved = false, originNodeId = originNodeId),
             ).addAction(
                 android.R.drawable.ic_menu_send,
                 context.getString(R.string.action_approve),
-                approvalAction(context, challengeId, approved = true),
+                approvalAction(context, challengeId, approved = true, originNodeId = originNodeId),
             ).build()
     }
 
@@ -108,12 +109,14 @@ object UnlockNotifications : UnlockNotifier {
     private fun approvalAction(
         context: Context,
         challengeId: Long,
+        originNodeId: String? = null,
         approved: Boolean,
     ): PendingIntent {
         val intent =
             Intent(context, ApprovalActionReceiver::class.java).apply {
                 action = if (approved) ApprovalActionReceiver.ACTION_APPROVE else ApprovalActionReceiver.ACTION_DENY
                 putExtra(ApprovalActionReceiver.EXTRA_CHALLENGE_ID, challengeId)
+                putExtra(ApprovalActionReceiver.EXTRA_ORIGIN_NODE, originNodeId)
             }
         return PendingIntent.getBroadcast(
             context,

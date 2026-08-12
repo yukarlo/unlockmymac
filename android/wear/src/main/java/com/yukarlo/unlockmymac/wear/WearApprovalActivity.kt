@@ -7,6 +7,12 @@ import android.util.Log
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +28,7 @@ import androidx.wear.compose.material.CompactChip
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.yukarlo.unlockmymac.container
+import com.yukarlo.unlockmymac.service.ApprovalMirror
 import com.yukarlo.unlockmymac.service.BleUnlockService
 
 /**
@@ -44,6 +51,7 @@ import com.yukarlo.unlockmymac.service.BleUnlockService
  */
 class WearApprovalActivity : ComponentActivity() {
     private var challengeId: Long = -1L
+    private var originNodeId: String? = null
     private var resolved = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,10 +65,40 @@ class WearApprovalActivity : ComponentActivity() {
 
         challengeId = intent.getLongExtra(EXTRA_CHALLENGE_ID, -1L)
         val macName = intent.getStringExtra(EXTRA_MAC_NAME)
+        originNodeId = intent.getStringExtra(EXTRA_ORIGIN_NODE)
+
+        Log.i(TAG, "Approval screen for challenge=$challengeId origin=$originNodeId")
 
         if (challengeId < 0) {
             finish()
             return
+        }
+
+        // Answering on the other device has to close this screen. Cancelling a notification
+        // cannot, so the signal depends on whose challenge this is:
+        //  - ours: the shared status goes null the moment it resolves;
+        //  - mirrored: the originating device sends an explicit dismiss, since we hold no
+        //    challenge of our own to watch.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                if (originNodeId == null) {
+                    container.status.status
+                        .map { it.pendingApproval?.id }
+                        .distinctUntilChanged()
+                        .collect { pendingId ->
+                            if (!resolved && pendingId != challengeId) closeAlreadyAnswered()
+                        }
+                } else {
+                    ApprovalMirror.dismissed.collect { dismissed ->
+                        if (!resolved &&
+                            dismissed.challengeId == challengeId &&
+                            dismissed.nodeId == originNodeId
+                        ) {
+                            closeAlreadyAnswered()
+                        }
+                    }
+                }
+            }
         }
 
         setContent {
@@ -156,10 +194,24 @@ class WearApprovalActivity : ComponentActivity() {
         if (!resolved) finish()
     }
 
+    /** Someone answered on the other device; nothing to send, just get off the screen. */
+    private fun closeAlreadyAnswered() {
+        Log.i(TAG, "Closing: answered on the other device")
+        resolved = true
+        finish()
+    }
+
     private fun resolve(approved: Boolean) {
         if (resolved) return
         resolved = true
-        BleUnlockService.resolveApproval(this, challengeId, approved)
+        val origin = originNodeId
+        if (origin == null) {
+            BleUnlockService.resolveApproval(this, challengeId, approved)
+        } else {
+            // A mirrored prompt: this watch holds no such challenge, so the answer goes back
+            // to the device that does.
+            ApprovalMirror.sendDecision(this, origin, challengeId, approved)
+        }
         container.notifier.cancelApproval(this)
         finish()
     }
@@ -167,6 +219,7 @@ class WearApprovalActivity : ComponentActivity() {
     companion object {
         const val EXTRA_CHALLENGE_ID = "challenge_id"
         const val EXTRA_MAC_NAME = "mac_name"
+        const val EXTRA_ORIGIN_NODE = "origin_node"
         private const val TAG = "WearApproval"
     }
 }

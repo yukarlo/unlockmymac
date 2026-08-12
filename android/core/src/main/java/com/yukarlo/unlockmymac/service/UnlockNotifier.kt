@@ -24,11 +24,18 @@ interface UnlockNotifier {
         statusText: String,
     ): Notification
 
-    /** The time-boxed "may I unlock?" prompt, carrying Approve and Deny actions. */
+    /**
+     * The time-boxed "may I unlock?" prompt, carrying Approve and Deny actions.
+     *
+     * [originNodeId] is null for a challenge this device holds itself. When set, the prompt is a
+     * mirrored copy of another device's challenge and the actions must send the answer there
+     * rather than resolve locally — only the challenged device can sign.
+     */
     fun approvalRequest(
         context: Context,
         challengeId: Long,
         macName: String?,
+        originNodeId: String? = null,
     ): Notification
 
     fun cancelApproval(context: Context)

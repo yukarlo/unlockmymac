@@ -85,6 +85,7 @@ object WearNotifier : UnlockNotifier {
         context: Context,
         challengeId: Long,
         macName: String?,
+        originNodeId: String?,
     ): Notification {
         val title =
             macName?.let { context.getString(R.string.notification_approval_title_mac, it) }
@@ -99,21 +100,21 @@ object WearNotifier : UnlockNotifier {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(approvalScreenIntent(context, challengeId, macName))
+            .setContentIntent(approvalScreenIntent(context, challengeId, macName, originNodeId))
             // Nothing to bridge to and nothing worth bridging: the phone raises its own prompt
             // when it is the device being challenged.
             .setLocalOnly(true)
             // Raises the approval screen itself instead of waiting to be scrolled to and tapped.
             // A prompt with a 60s life is not much use sitting in a notification tray.
-            .setFullScreenIntent(approvalScreenIntent(context, challengeId, macName), true)
+            .setFullScreenIntent(approvalScreenIntent(context, challengeId, macName, originNodeId), true)
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
                 context.getString(R.string.action_deny),
-                approvalAction(context, challengeId, approved = false),
+                approvalAction(context, challengeId, approved = false, originNodeId = originNodeId),
             ).addAction(
                 android.R.drawable.ic_menu_send,
                 context.getString(R.string.action_approve),
-                approvalAction(context, challengeId, approved = true),
+                approvalAction(context, challengeId, approved = true, originNodeId = originNodeId),
             ).build()
     }
 
@@ -125,6 +126,7 @@ object WearNotifier : UnlockNotifier {
         context: Context,
         challengeId: Long,
         macName: String?,
+        originNodeId: String?,
     ): PendingIntent =
         PendingIntent.getActivity(
             context,
@@ -132,7 +134,8 @@ object WearNotifier : UnlockNotifier {
             Intent(context, WearApprovalActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
                 .putExtra(WearApprovalActivity.EXTRA_CHALLENGE_ID, challengeId)
-                .putExtra(WearApprovalActivity.EXTRA_MAC_NAME, macName),
+                .putExtra(WearApprovalActivity.EXTRA_MAC_NAME, macName)
+                .putExtra(WearApprovalActivity.EXTRA_ORIGIN_NODE, originNodeId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
@@ -149,11 +152,13 @@ object WearNotifier : UnlockNotifier {
         context: Context,
         challengeId: Long,
         approved: Boolean,
+        originNodeId: String? = null,
     ): PendingIntent {
         val intent =
             Intent(context, ApprovalActionReceiver::class.java).apply {
                 action = if (approved) ApprovalActionReceiver.ACTION_APPROVE else ApprovalActionReceiver.ACTION_DENY
                 putExtra(ApprovalActionReceiver.EXTRA_CHALLENGE_ID, challengeId)
+                putExtra(ApprovalActionReceiver.EXTRA_ORIGIN_NODE, originNodeId)
             }
         return PendingIntent.getBroadcast(
             context,
