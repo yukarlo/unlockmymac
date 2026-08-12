@@ -25,7 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.wear.compose.material.Button
+import androidx.wear.compose.material.CompactChip
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.Chip
@@ -71,7 +71,7 @@ private fun WearHome() {
             Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 24.dp),
+                .padding(horizontal = 16.dp, vertical = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -89,13 +89,18 @@ private fun WearHome() {
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption2,
             )
-            Button(onClick = {
-                permissionLauncher.launch(
-                    arrayOf(Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT),
-                )
-            }) {
-                Text(context.getString(R.string.home_grant))
-            }
+            CompactChip(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    permissionLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.BLUETOOTH_ADVERTISE,
+                            Manifest.permission.BLUETOOTH_CONNECT,
+                        ),
+                    )
+                },
+                label = { Text(context.getString(R.string.home_grant)) },
+            )
             return@Column
         }
 
@@ -134,8 +139,11 @@ private fun WearHome() {
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption2,
             )
-            Button(onClick = {
-                scope.launch {
+            CompactChip(
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(context.getString(R.string.home_enrol_send)) },
+                onClick = {
+                    scope.launch {
                     enrolMessage =
                         when (val result = WearEnrolmentSender.sendPublicKey(context)) {
                             WearEnrolmentSender.Result.Sent -> {
@@ -150,10 +158,9 @@ private fun WearHome() {
                                 result.reason
                             }
                         }
-                }
-            }) {
-                Text(context.getString(R.string.home_enrol_send))
-            }
+                    }
+                },
+            )
             enrolMessage?.let {
                 Text(text = it, textAlign = TextAlign.Center, style = MaterialTheme.typography.caption2)
             }
