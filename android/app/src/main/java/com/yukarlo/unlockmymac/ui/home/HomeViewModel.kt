@@ -13,14 +13,20 @@ import com.yukarlo.unlockmymac.data.Timeouts
 import com.yukarlo.unlockmymac.permissions.BatteryOptimization
 import com.yukarlo.unlockmymac.permissions.BlePermissions
 import com.yukarlo.unlockmymac.service.BleUnlockService
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class HomeUiState(
@@ -42,10 +48,6 @@ class HomeViewModel(
     private val permissionGranted = MutableStateFlow(BlePermissions.hasBleAccess(application))
     private val bluetoothOn = MutableStateFlow(isBluetoothOn())
     private val batteryExempt = MutableStateFlow(BatteryOptimization.isExempt(application))
-
-    init {
-        trackDenialCountdown()
-    }
 
     /** Device-level signals, folded together because `combine` only types up to five flows. */
     private val environment =
@@ -196,30 +198,44 @@ class HomeViewModel(
     /** True briefly after a reset, so the button can confirm it did something. */
     val resetFeedback: StateFlow<Boolean> = _resetFeedback.asStateFlow()
 
-    private val _denialSecondsLeft = MutableStateFlow<Int?>(null)
-
     /**
      * Seconds until the Mac will ask again after a denial, or null when it is free to ask.
      *
      * Counted locally: the backoff lives on the Mac and the phone has no way to observe it, so
      * this mirrors `Timeouts.DENIAL_BACKOFF_MS`. Without it the two minutes of deliberate
      * silence after a denial is indistinguishable from a failure — which is exactly how it read.
+     *
+     * Derived rather than driven from `init`: a constructor that starts a coroutine touching a
+     * property declared further down the class reads that property before its initialiser runs,
+     * which threw an NPE on every launch.
      */
-    val denialSecondsLeft: StateFlow<Int?> = _denialSecondsLeft.asStateFlow()
-
-    private fun trackDenialCountdown() {
-        viewModelScope.launch {
-            while (true) {
-                val deniedAt = container.status.status.value.deniedAtMs
-                _denialSecondsLeft.value =
-                    deniedAt?.let {
-                        val remaining = Timeouts.DENIAL_BACKOFF_MS - (System.currentTimeMillis() - it)
-                        if (remaining > 0) ((remaining + 999) / 1000).toInt() else null
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val denialSecondsLeft: StateFlow<Int?> =
+        container.status.status
+            .map { it.deniedAtMs }
+            .distinctUntilChanged()
+            .flatMapLatest { deniedAt ->
+                if (deniedAt == null) {
+                    flowOf<Int?>(null)
+                } else {
+                    // Ticks only while a denial is live and the screen is watching.
+                    flow<Int?> {
+                        while (true) {
+                            val remaining = Timeouts.DENIAL_BACKOFF_MS - (System.currentTimeMillis() - deniedAt)
+                            if (remaining <= 0) {
+                                emit(null)
+                                break
+                            }
+                            emit(((remaining + 999) / 1000).toInt())
+                            delay(1_000)
+                        }
                     }
-                delay(1_000)
-            }
-        }
-    }
+                }
+            }.stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
 
     private companion object {
         /** How long the reset button shows its confirmation. */
