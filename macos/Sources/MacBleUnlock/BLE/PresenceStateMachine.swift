@@ -385,15 +385,35 @@ final class PresenceStateMachine: ObservableObject {
         candidates().max { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }
     }
 
-    /// "Which handle is still alive?" — the most recently seen.
+    /// "Which handle is alive *and* worth connecting to?"
     ///
-    /// Android mints a new private address on every `startAdvertising`, so one phone can occupy
+    /// Android mints a new private address on every `startAdvertising`, so one device can occupy
     /// several entries at once. Recency predicts which of them still exists; RSSI does not — a
-    /// rotated-away address keeps whatever strength it was last heard at, and picking by
+    /// rotated-away address keeps whatever strength it was last heard at, and picking purely by
     /// strength happily selects a dead handle, which then stalls for the whole watchdog budget.
+    ///
+    /// Recency alone is not enough either, now that a phone and a watch can both be in range.
+    /// It picks whichever happened to advertise last, which is arbitrary, and signal strength is
+    /// what actually decides whether the handshake succeeds: measured on this hardware, -57 dBm
+    /// connects cleanly, -66 stalls once, -74 fails outright.
+    ///
+    /// So: among handles heard within the last couple of seconds — all certainly alive, since
+    /// the observed median advertisement gap is 0.29 s — take the strongest. Fall back to plain
+    /// recency when nothing is that fresh, which is the old behaviour and the safe one.
     private func connectTarget() -> DiscoveredPeripheral? {
-        candidates().max { $0.lastSeenAt < $1.lastSeenAt }
+        let fresh = candidates()
+        let livenessCutoff = Date().addingTimeInterval(-Self.livenessWindowSeconds)
+        let certainlyAlive = fresh.filter { $0.lastSeenAt > livenessCutoff }
+        if let strongest = certainlyAlive.max(by: {
+            ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200)
+        }) {
+            return strongest
+        }
+        return fresh.max { $0.lastSeenAt < $1.lastSeenAt }
     }
+
+    /// How recently a handle must have been heard to be treated as certainly still alive.
+    private static let livenessWindowSeconds: TimeInterval = 2
 
     /// Entries recent enough and strong enough to be this phone, honouring an existing pin.
     private func candidates() -> [DiscoveredPeripheral] {
