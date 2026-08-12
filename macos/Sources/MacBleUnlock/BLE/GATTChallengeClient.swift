@@ -442,6 +442,19 @@ extension GATTChallengeClient: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral === activePeripheral, characteristic.uuid == BLEProtocol.challengeCharacteristicUUID else { return }
         if let error {
+            // A challenge addressed to a different device is refused here, on the write, not on
+            // the read: the peripheral validates the payload as it arrives and never creates a
+            // session. Treating that as a transport fault meant retrying the same device every
+            // few seconds forever once a second device was paired.
+            let nsError = error as NSError
+            if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 129 {
+                log.notice("Device refused the challenge on write (ATT 0x81)")
+                finish(.failure(.rejectedByPeer), for: peripheral, disconnect: true)
+                return
+            }
+            // CoreBluetooth renders every application-defined ATT code as "Unknown ATT error", so
+            // the number is the only way to tell them apart in a log.
+            log.notice("Challenge write failed (ATT code \(nsError.code, privacy: .public))")
             finish(.failure(.writeFailed(error)), for: peripheral, disconnect: true)
             return
         }
