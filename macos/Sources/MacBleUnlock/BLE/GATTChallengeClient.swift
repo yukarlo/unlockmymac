@@ -163,15 +163,15 @@ final class GATTChallengeClient: NSObject {
 
     /// Performs a full GATT authentication handshake against `peripheral`.
     ///
-    /// `addressedTo` is the device the challenge names. With more than one device paired the Mac
-    /// cannot know which is on the other end — addresses rotate and are never identity — so it
-    /// picks one and lets the caller retry with another if this one answers `0x81`. A device that
-    /// is sent a challenge naming a different device rejects it in `validate`, before any session
-    /// exists, so a wrong guess costs a round trip and never raises a prompt on the wrong wrist.
+    /// The challenge is addressed to whoever answers rather than to a named device. The Mac
+    /// cannot tell which of its paired devices it has connected to before it asks — addresses
+    /// rotate and are never identity — and guessing cost a full connect-and-write per wrong
+    /// guess: with three devices paired and two of them switched off, one unlock took six
+    /// attempts across 45 seconds. Identity is established afterwards, by which stored public
+    /// key verifies the signature, which is the only evidence worth trusting anyway.
     func authenticate(
         peripheral: CBPeripheral,
         macInstallationId: String,
-        addressedTo pairedDevice: PairedDevice,
         completion: @escaping Completion
     ) {
         bleCentral.queue.async { [weak self] in
@@ -189,7 +189,7 @@ final class GATTChallengeClient: NSObject {
 
             let request = ProtocolCodec.ChallengeRequest(
                 macInstallationId: macInstallationId,
-                deviceId: pairedDevice.deviceId,
+                deviceId: BLEProtocol.anyDeviceId,
                 issuedAtMs: Int64(Date().timeIntervalSince1970 * 1000),
                 challengeData: challengeData
             )
@@ -203,7 +203,7 @@ final class GATTChallengeClient: NSObject {
             self.scheduleTimeout()
             self.connectAttempt = 1
             self.log.notice("Connecting to \(peripheral.identifier.uuidString, privacy: .public) for GATT authentication")
-            EventLogger.shared.info(category: "GATT", "Initiating challenge handshake with \(pairedDevice.name)")
+            EventLogger.shared.info(category: "GATT", "Initiating challenge handshake")
             self.bleCentral.connect(peripheral)
             self.armConnectWatchdog(for: peripheral)
         }
