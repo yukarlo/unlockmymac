@@ -152,5 +152,11 @@ class ProtocolVectorsTest {
             timings.getLong("pairingWindowMs"),
             com.yukarlo.unlockmymac.data.Timeouts.PAIRING_WINDOW_MS,
         )
+        // Must match `deniedBackoffSeconds` on the macOS side: the phone counts down against
+        // this to tell the user when the Mac will ask again, so drift would show a wrong time.
+        assertEquals(
+            timings.getLong("deniedBackoffMs"),
+            com.yukarlo.unlockmymac.data.Timeouts.DENIAL_BACKOFF_MS,
+        )
     }
 }

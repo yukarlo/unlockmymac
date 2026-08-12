@@ -140,6 +140,8 @@
     "challengeTtlMs": 10000,
     "challengeTtlWithApprovalMs": 60000,
     "pairingWindowMs": 60000,
+    "_deniedBackoffComment": "How long the Mac refuses to re-challenge after a denial. The phone counts down locally from this so two minutes of deliberate silence is not mistaken for a failure.",
+    "deniedBackoffMs": 120000,
     "maxClockSkewMs": 120000
   }
 }

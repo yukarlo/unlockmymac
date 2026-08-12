@@ -47,6 +47,14 @@ data class BleStatus(
     val lastAuth: LastAuth? = null,
     val pendingApproval: ApprovalRequest? = null,
     val pairingWindowExpiresAtMs: Long? = null,
+    /**
+     * When the user last denied a request.
+     *
+     * The Mac refuses to re-challenge for [com.yukarlo.unlockmymac.data.Timeouts.DENIAL_BACKOFF_MS]
+     * after a denial. The phone cannot see that timer, so it counts down from this locally —
+     * otherwise two minutes of silence is indistinguishable from the app being broken.
+     */
+    val deniedAtMs: Long? = null,
 )
 
 /**
@@ -87,6 +95,9 @@ class BleStatusRepository {
         it.copy(
             lastAuth = LastAuth(System.currentTimeMillis(), outcome, challengeTag, detail),
             pendingApproval = null,
+            // A successful unlock clears any earlier refusal; the Mac's backoff is moot once
+            // it has authenticated.
+            deniedAtMs = if (outcome == AuthOutcome.DENIED) System.currentTimeMillis() else null,
         )
     }
 

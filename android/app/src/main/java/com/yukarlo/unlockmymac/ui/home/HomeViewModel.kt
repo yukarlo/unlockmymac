@@ -9,6 +9,7 @@ import com.yukarlo.unlockmymac.data.AdvertiseMode
 import com.yukarlo.unlockmymac.data.AppSettings
 import com.yukarlo.unlockmymac.data.BleStatus
 import com.yukarlo.unlockmymac.data.PairedMac
+import com.yukarlo.unlockmymac.data.Timeouts
 import com.yukarlo.unlockmymac.permissions.BatteryOptimization
 import com.yukarlo.unlockmymac.permissions.BlePermissions
 import com.yukarlo.unlockmymac.service.BleUnlockService
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class HomeUiState(
@@ -40,6 +42,10 @@ class HomeViewModel(
     private val permissionGranted = MutableStateFlow(BlePermissions.hasBleAccess(application))
     private val bluetoothOn = MutableStateFlow(isBluetoothOn())
     private val batteryExempt = MutableStateFlow(BatteryOptimization.isExempt(application))
+
+    init {
+        trackDenialCountdown()
+    }
 
     /** Device-level signals, folded together because `combine` only types up to five flows. */
     private val environment =
@@ -177,6 +183,47 @@ class HomeViewModel(
      */
     fun forceReset() {
         BleUnlockService.forceReset(app)
+        // The button was silent before, so it looked broken and got pressed repeatedly.
+        viewModelScope.launch {
+            _resetFeedback.value = true
+            delay(RESET_FEEDBACK_MS)
+            _resetFeedback.value = false
+        }
+    }
+
+    private val _resetFeedback = MutableStateFlow(false)
+
+    /** True briefly after a reset, so the button can confirm it did something. */
+    val resetFeedback: StateFlow<Boolean> = _resetFeedback.asStateFlow()
+
+    private val _denialSecondsLeft = MutableStateFlow<Int?>(null)
+
+    /**
+     * Seconds until the Mac will ask again after a denial, or null when it is free to ask.
+     *
+     * Counted locally: the backoff lives on the Mac and the phone has no way to observe it, so
+     * this mirrors `Timeouts.DENIAL_BACKOFF_MS`. Without it the two minutes of deliberate
+     * silence after a denial is indistinguishable from a failure — which is exactly how it read.
+     */
+    val denialSecondsLeft: StateFlow<Int?> = _denialSecondsLeft.asStateFlow()
+
+    private fun trackDenialCountdown() {
+        viewModelScope.launch {
+            while (true) {
+                val deniedAt = container.status.status.value.deniedAtMs
+                _denialSecondsLeft.value =
+                    deniedAt?.let {
+                        val remaining = Timeouts.DENIAL_BACKOFF_MS - (System.currentTimeMillis() - it)
+                        if (remaining > 0) ((remaining + 999) / 1000).toInt() else null
+                    }
+                delay(1_000)
+            }
+        }
+    }
+
+    private companion object {
+        /** How long the reset button shows its confirmation. */
+        const val RESET_FEEDBACK_MS = 4_000L
     }
 
     private fun isBluetoothOn(): Boolean = app.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true

@@ -72,6 +72,8 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val permissionDenied by viewModel.permissionDenied.collectAsStateWithLifecycle()
+    val resetFeedback by viewModel.resetFeedback.collectAsStateWithLifecycle()
+    val denialSecondsLeft by viewModel.denialSecondsLeft.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     OnResume { viewModel.refreshEnvironment() }
@@ -150,6 +152,19 @@ fun HomeScreen(
                         Text(stringResource(R.string.home_battery_allow))
                     }
                 }
+            }
+
+            // After a denial the Mac deliberately goes quiet for two minutes. Say so, or the
+            // silence reads as a broken app — which is exactly how it read.
+            denialSecondsLeft?.let { seconds ->
+                WarningCard(
+                    text =
+                        stringResource(
+                            R.string.home_denied_countdown,
+                            seconds / 60,
+                            seconds % 60,
+                        ),
+                )
             }
 
             // Pending Approval Request Card
@@ -326,9 +341,19 @@ fun HomeScreen(
                     Text(stringResource(R.string.home_reset_button), fontWeight = FontWeight.Medium)
                 }
                 Text(
-                    text = stringResource(R.string.home_reset_hint),
+                    text =
+                        if (resetFeedback) {
+                            stringResource(R.string.home_reset_done)
+                        } else {
+                            stringResource(R.string.home_reset_hint)
+                        },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color =
+                        if (resetFeedback) {
+                            StatusActiveGreen
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                 )
             }
 

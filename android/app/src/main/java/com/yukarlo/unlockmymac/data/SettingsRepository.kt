@@ -82,6 +82,17 @@ class SettingsRepository(
 
 /** Challenge lifetimes. Approval mode needs a human-scale window, not a machine-scale one. */
 object Timeouts {
+    /**
+     * How long the Mac refuses to re-challenge after the user denies one.
+     *
+     * Mirrors `deniedBackoffSeconds` in the macOS `PresenceStateMachine`. The phone cannot
+     * observe the Mac's timer, so it counts down locally from the moment of denial purely to
+     * tell the user when to expect the next prompt — without it, two minutes of silence is
+     * indistinguishable from a broken app. Kept in `protocol-vectors.json` so the two sides
+     * cannot drift apart unnoticed.
+     */
+    const val DENIAL_BACKOFF_MS = 120_000L
+
     const val CHALLENGE_TTL_MS = 10_000L
     const val CHALLENGE_TTL_WITH_APPROVAL_MS = 60_000L
     const val PAIRING_WINDOW_MS = 60_000L
