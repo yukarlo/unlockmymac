@@ -136,6 +136,38 @@
       { "name": "second claim in the same window", "reason": "PAIRING_WINDOW_CLOSED" }
     ]
   },
+  "enrolment": {
+    "_comment": [
+      "How a second device (a watch, which has no camera to scan the pairing QR) gets",
+      "authorised. The phone is already trusted by the Mac, so it signs a statement vouching",
+      "for the watch's own public key. The Mac reads that statement and verifies it against the",
+      "phone's stored key. No private key ever leaves the device that generated it — the watch",
+      "mints its own, exactly as the phone did, and can be revoked without touching the phone.",
+      "The signature covers the body verbatim, up to but excluding the newline before",
+      "'signature='. Sign and verify those exact bytes; never a re-serialised copy."
+    ],
+    "offer": {
+      "prefix": "mac-ble-enrol:v1",
+      "keyOrder": ["macInstallationId", "deviceId", "name", "publicKey", "issuedAt"],
+      "signatureKey": "signature",
+      "signatureEncoding": "base64 SHA256withECDSA DER",
+      "publicKeyEncoding": "base64 X.509 SubjectPublicKeyInfo DER",
+      "publicKeyLengthBytes": 91,
+      "maxOfferBytes": 1024
+    },
+    "offerTtlMs": 300000,
+    "rejectCases": [
+      { "name": "wrong prefix", "reason": "BAD_PREFIX" },
+      { "name": "missing signature line", "reason": "BAD_STRUCTURE" },
+      { "name": "signature not base64", "reason": "BAD_SIGNATURE" },
+      { "name": "public key not 91 bytes", "reason": "BAD_PUBLIC_KEY" },
+      { "name": "non-UUID deviceId", "reason": "BAD_UUID" },
+      { "name": "offer naming a different Mac", "reason": "UNKNOWN_MAC" },
+      { "name": "device vouching for itself", "reason": "WRONG_DEVICE" },
+      { "name": "offer older than the TTL", "reason": "CLOCK_SKEW" },
+      { "name": "signature not from a paired device", "reason": "BAD_SIGNATURE" }
+    ]
+  },
   "timings": {
     "challengeTtlMs": 10000,
     "challengeTtlWithApprovalMs": 60000,

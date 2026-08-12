@@ -32,6 +32,8 @@ enum class RejectReason {
     SIGNING_FAILED,
     AWAITING_APPROVAL,
     DENIED_BY_USER,
+    BAD_PUBLIC_KEY,
+    BAD_SIGNATURE,
 }
 
 /**
