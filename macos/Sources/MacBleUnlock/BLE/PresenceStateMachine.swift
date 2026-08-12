@@ -131,6 +131,7 @@ final class PresenceStateMachine: ObservableObject {
 
         observeDiscoveredPeripherals()
         observeScreenLockState()
+        observeDisplaySleepState()
         observeSystemWake()
 
         // Launching while already locked (login item, or a restart during a lock session) still
@@ -214,6 +215,55 @@ final class PresenceStateMachine: ObservableObject {
             .store(in: &cancellables)
     }
 
+    /// True only when there is a lock screen in front of a human.
+    ///
+    /// Scanning continues while the display sleeps, so the phone is already discovered and its
+    /// RSSI already averaged by the time this flips — the handshake starts from a warm cache
+    /// rather than a cold scan, which is what makes the unlock feel immediate on a keypress.
+    private var shouldChallengeNow: Bool {
+        systemActionController.isScreenLocked && !systemActionController.isDisplayAsleep
+    }
+
+    /// Ties the handshake — not the radio — to the display being awake.
+    ///
+    /// The Mac used to wake its own display and unlock on approach, which meant walking past
+    /// the desk to fetch something raised an approval prompt on the phone. Now the Mac waits to
+    /// be woken deliberately, the same bargain Apple Watch unlock makes: one keypress buys
+    /// silence the rest of the time.
+    private func observeDisplaySleepState() {
+        systemActionController.$isDisplayAsleep
+            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .sink { [weak self] asleep in
+                guard let self else { return }
+                if asleep {
+                    // An approval prompt waiting on a human is pointless once the screen the
+                    // human would unlock into has gone dark; leaving it in flight would strand
+                    // a notification on the phone for a login that can no longer happen.
+                    if self.gattClient.isBusy { self.gattClient.cancel() }
+                    self.stopHeartbeatTimer()
+                    return
+                }
+
+                guard self.systemActionController.isScreenLocked else { return }
+                EventLogger.shared.info(category: "State", "Lock screen shown — asking the phone now")
+
+                // A transport stall or a timeout from while the screen was dark should not
+                // delay the unlock the user is now actively waiting for. A denial is different:
+                // it is a decision, and it keeps its full backoff so "no" stays meaningful even
+                // if the display is slept and woken to try to shake another prompt loose.
+                if !self.lastFailureWasDenial {
+                    self.lastAuthFailureDate = nil
+                    self.lastFailureWasTransport = false
+                }
+
+                self.autoUnlockController.resetAttemptsForNewDisplayWake()
+                if self.currentState != .absent { self.transitionTo(.absent) }
+                self.evaluatePresence()
+            }
+            .store(in: &cancellables)
+    }
+
     /// Screen locked: bring the radio up and try to unlock.
     ///
     /// Scanning exists only to serve auto-unlock, so it runs only while the Mac is locked. That
@@ -276,6 +326,11 @@ final class PresenceStateMachine: ObservableObject {
             // returns `sessionAlreadyInProgress`, which used to be logged as an auth failure
             // and reset the state — thrashing until the in-flight session timed out.
             if gattClient.isBusy { return }
+
+            // Track presence regardless, but only talk to the phone when a lock screen is up.
+            // Everything above this line keeps running while the display sleeps, so the phone
+            // stays discovered and the handshake can start the instant the screen comes back.
+            guard shouldChallengeNow else { return }
 
             if averageRSSI >= nearRSSIThreshold {
                 // `entry` answered "is the phone here?"; connecting needs the live handle,
@@ -399,16 +454,13 @@ final class PresenceStateMachine: ObservableObject {
     private func onAuthenticationSuccess() {
         transitionTo(.authenticatedNear)
 
-        // Assert valid user session before executing wake / auto-unlock
+        // Assert valid user session before executing auto-unlock
         if systemActionController.isUserSessionActive {
-            let locked = systemActionController.isScreenLocked
-            // Wake on approach when the session is open, or when locked and we can still act.
-            // Waking a locked Mac we cannot unlock only burns battery: `caffeinate -u` resets
-            // the system idle timer, so it would also stop the Mac ever reaching sleep.
-            if !locked || autoUnlockController.hasAttemptsRemaining {
-                systemActionController.wakeDisplay()
-            }
-            if locked {
+            // No `wakeDisplay()` here any more. The handshake only runs with the display
+            // already awake, so waking it was at best redundant; at worst `caffeinate -u`
+            // asserted user activity, reset the system idle timer and kept the Mac from ever
+            // reaching sleep while the phone sat nearby on the desk.
+            if systemActionController.isScreenLocked {
                 autoUnlockController.attemptAutoUnlock()
             }
         } else {
@@ -454,7 +506,7 @@ final class PresenceStateMachine: ObservableObject {
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             guard let self,
                   self.currentState == .unlockCooldown,
-                  self.systemActionController.isScreenLocked,
+                  self.shouldChallengeNow,
                   let paired = self.pairingManager.pairedDevice else { return }
 
             // Back off once auto-unlock can no longer act. Each beat is a full
@@ -477,16 +529,13 @@ final class PresenceStateMachine: ObservableObject {
                     guard let self else { return }
                     switch result {
                     case .success(let verified):
-                        // Only wake the display if we can actually act on it. `caffeinate -u`
-                        // asserts user activity, so waking on every beat resets the system idle
-                        // timer and the Mac can never reach sleep while the phone is nearby —
-                        // draining the battery and flapping the display on and off, even when
-                        // auto-unlock is disabled or its attempts are spent.
+                        // Re-checked rather than assumed: the display can sleep during the
+                        // round trip, and typing a password into a Mac that just went dark
+                        // would leak keystrokes into whatever has focus when it wakes.
                         if verified,
-                           self.systemActionController.isScreenLocked,
+                           self.shouldChallengeNow,
                            self.autoUnlockController.hasAttemptsRemaining {
                             EventLogger.shared.info(category: "AutoUnlock", "Heartbeat verified phone presence while screen locked. Unlocking...")
-                            self.systemActionController.wakeDisplay()
                             self.autoUnlockController.attemptAutoUnlock()
                         }
                     case .failure(let err):

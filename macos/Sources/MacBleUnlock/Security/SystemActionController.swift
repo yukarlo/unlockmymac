@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import Foundation
 
 /// Controls system actions (wake display, lock screen) and monitors lock screen state.
@@ -7,18 +8,30 @@ final class SystemActionController: ObservableObject {
 
     @Published private(set) var isScreenLocked: Bool = false
 
+    /// True while the displays are asleep, so there is no lock screen for anyone to look at.
+    ///
+    /// Gates the unlock handshake. Walking past a sleeping Mac should be silent: without this
+    /// the phone raises an approval prompt for a login nobody asked for, and keeps raising one
+    /// roughly every minute for as long as the Mac stays locked and the phone stays in range.
+    @Published private(set) var isDisplayAsleep: Bool = false
+
     private var notificationTokens: [NSObjectProtocol] = []
+
+    private var workspaceTokens: [NSObjectProtocol] = []
 
     private var reconcileTimer: Timer?
 
     init() {
         updateScreenLockState()
+        updateDisplaySleepState()
         observeScreenLockNotifications()
+        observeDisplaySleepNotifications()
         startLockStateReconciliation()
     }
 
     deinit {
         notificationTokens.forEach { DistributedNotificationCenter.default().removeObserver($0) }
+        workspaceTokens.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         reconcileTimer?.invalidate()
     }
 
@@ -34,6 +47,7 @@ final class SystemActionController: ObservableObject {
     private func startLockStateReconciliation() {
         let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             self?.updateScreenLockState()
+            self?.updateDisplaySleepState()
         }
         RunLoop.main.add(timer, forMode: .common)
         reconcileTimer = timer
@@ -62,6 +76,58 @@ final class SystemActionController: ObservableObject {
                     "Lock state corrected from session: \(locked ? "locked" : "unlocked")"
                 )
             }
+        }
+    }
+
+    /// Reads the authoritative display-sleep state.
+    ///
+    /// `CGMainDisplayID()` follows the display carrying the menu bar, so on a Mac in clamshell
+    /// mode this reports the external panel rather than the shut lid — which is the state that
+    /// matters, because that is the screen the login window appears on.
+    func updateDisplaySleepState() {
+        setDisplayAsleep(CGDisplayIsAsleep(CGMainDisplayID()) != 0, source: "session poll")
+    }
+
+    /// Observes display sleep and wake.
+    ///
+    /// `NSWorkspace` posts these only when *every* display sleeps or the first one wakes, which
+    /// is the behaviour we want with an external monitor attached: a shut lid beside a lit
+    /// external screen is not "away".
+    ///
+    /// Paired with the reconciliation poll for the same reason the lock state needed one —
+    /// these are edges, and a missed edge would strand the flag in the wrong position.
+    private func observeDisplaySleepNotifications() {
+        let center = NSWorkspace.shared.notificationCenter
+
+        let sleepToken = center.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.setDisplayAsleep(true, source: "notification")
+        }
+
+        let wakeToken = center.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.setDisplayAsleep(false, source: "notification")
+        }
+
+        workspaceTokens = [sleepToken, wakeToken]
+    }
+
+    private func setDisplayAsleep(_ asleep: Bool, source: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isDisplayAsleep != asleep else { return }
+            // Only assign on a real change: subscribers treat each emission as a fresh edge, and
+            // a repeated "awake" would re-trigger the handshake on every poll.
+            self.isDisplayAsleep = asleep
+            EventLogger.shared.info(
+                category: "System",
+                "Display \(asleep ? "asleep" : "awake") (\(source))"
+            )
         }
     }
 

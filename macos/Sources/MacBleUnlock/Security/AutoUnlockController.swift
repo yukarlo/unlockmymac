@@ -205,6 +205,24 @@ final class AutoUnlockController: ObservableObject {
         isEnabled && attemptsThisLockSession < Self.maxAttemptsPerLockSession
     }
 
+    /// Gives a freshly shown lock screen a fresh set of attempts.
+    ///
+    /// The cap guards against a mistimed keystroke sequence turning into a loop, but a lock
+    /// session can span days. Counting across the whole of one meant three unlucky attempts on
+    /// a Monday morning left the Mac silent for the rest of the week, with nothing in the log to
+    /// say why. Resetting per display wake keeps the loop protection where it belongs — within a
+    /// single approach — and costs nothing: every attempt still needs a freshly verified P-256
+    /// signature from the paired phone, and the password is the same correct one each time.
+    func resetAttemptsForNewDisplayWake() {
+        guard attemptsThisLockSession > 0 else { return }
+        EventLogger.shared.info(
+            category: "AutoUnlock",
+            "Lock screen shown again — auto-unlock attempts reset"
+        )
+        attemptsThisLockSession = 0
+        lastAttemptDate = nil
+    }
+
     /// Virtual keycodes (ANSI layout-independent).
     private static let keyA: CGKeyCode = 0x00
     private static let keyReturn: CGKeyCode = 0x24
