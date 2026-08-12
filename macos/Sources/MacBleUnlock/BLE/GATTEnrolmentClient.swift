@@ -125,6 +125,12 @@ final class GATTEnrolmentClient: NSObject {
         activePeripheral = nil
         accumulated = Data()
         peripheral.delegate = nil
+        // Released like the challenge and pairing clients do. `connectionDelegate` is a single
+        // slot shared by all three, so leaving it pointed here meant a later handshake's
+        // connect callbacks could be delivered to a finished enrolment instead.
+        if bleCentral.connectionDelegate === self {
+            bleCentral.connectionDelegate = nil
+        }
         bleCentral.cancelConnection(peripheral)
         DispatchQueue.main.async { pending?(result) }
     }
