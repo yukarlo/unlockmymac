@@ -3,6 +3,7 @@ package com.yukarlo.unlockmymac.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.yukarlo.unlockmymac.container
 
 /** Handles the Approve/Deny buttons on the approval notification. */
 class ApprovalActionReceiver : BroadcastReceiver() {
@@ -26,7 +27,7 @@ class ApprovalActionReceiver : BroadcastReceiver() {
                 putExtra(BleUnlockService.EXTRA_APPROVED, approved)
             },
         )
-        UnlockNotifications.cancelApproval(context)
+        context.container.notifier.cancelApproval(context)
     }
 
     companion object {

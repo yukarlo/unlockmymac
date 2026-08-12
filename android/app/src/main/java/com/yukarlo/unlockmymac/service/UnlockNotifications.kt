@@ -11,13 +11,17 @@ import androidx.core.app.NotificationManagerCompat
 import com.yukarlo.unlockmymac.MainActivity
 import com.yukarlo.unlockmymac.R
 
-object UnlockNotifications {
+/** Phone presentation for the shared service's notifications. */
+object UnlockNotifications : UnlockNotifier {
     const val ONGOING_CHANNEL_ID = "ble_unlock_ongoing"
     const val APPROVAL_CHANNEL_ID = "ble_unlock_approval"
     const val ONGOING_NOTIFICATION_ID = 1001
     const val APPROVAL_NOTIFICATION_ID = 1002
 
-    fun createChannels(context: Context) {
+    override val ongoingNotificationId = ONGOING_NOTIFICATION_ID
+    override val approvalNotificationId = APPROVAL_NOTIFICATION_ID
+
+    override fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
 
         manager.createNotificationChannel(
@@ -44,7 +48,7 @@ object UnlockNotifications {
         )
     }
 
-    fun ongoing(
+    override fun ongoing(
         context: Context,
         statusText: String,
     ): Notification =
@@ -60,7 +64,7 @@ object UnlockNotifications {
             .setContentIntent(openAppIntent(context))
             .build()
 
-    fun approvalRequest(
+    override fun approvalRequest(
         context: Context,
         challengeId: Long,
         macName: String?,
@@ -88,7 +92,7 @@ object UnlockNotifications {
             ).build()
     }
 
-    fun cancelApproval(context: Context) {
+    override fun cancelApproval(context: Context) {
         NotificationManagerCompat.from(context).cancel(APPROVAL_NOTIFICATION_ID)
     }
 

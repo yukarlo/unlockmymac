@@ -30,6 +30,8 @@ dependencies {
     // flows, Context extensions — so they need them on their own compile classpath.
     api(libs.androidx.core.ktx)
     api(libs.androidx.datastore.preferences)
+    // BleUnlockService is a LifecycleService, and it lives here so a phone and a watch share it.
+    api(libs.androidx.lifecycle.service)
 
     testImplementation(libs.junit)
     // Real org.json for JVM unit tests; the android.jar stub throws "not mocked".

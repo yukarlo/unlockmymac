@@ -1,0 +1,13 @@
+<resources>
+    <!--
+      Status text the shared service computes. The wording describes the radio, not the device,
+      so a phone and a watch say the same thing. Anything to do with presentation — channel names,
+      the notification title, the Approve/Deny labels — belongs to the app module, which knows
+      what its form factor should look like.
+    -->
+    <string name="notification_starting">Starting…</string>
+    <string name="notification_active_unpaired">Not paired with a Mac</string>
+    <string name="notification_paused">Paused</string>
+    <string name="notification_disabled">Disabled</string>
+    <string name="notification_error">Could not start Bluetooth</string>
+</resources>

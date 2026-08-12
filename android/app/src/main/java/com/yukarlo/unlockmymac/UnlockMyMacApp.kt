@@ -11,7 +11,7 @@ class UnlockMyMacApp :
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer(this)
+        container = AppContainer(this, UnlockNotifications)
         UnlockNotifications.createChannels(this)
     }
 }

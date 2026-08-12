@@ -10,6 +10,7 @@ import com.yukarlo.unlockmymac.data.EventLog
 import com.yukarlo.unlockmymac.data.PairingRepository
 import com.yukarlo.unlockmymac.data.SettingsRepository
 import com.yukarlo.unlockmymac.pairing.PairingCoordinator
+import com.yukarlo.unlockmymac.service.UnlockNotifier
 
 /**
  * Hand-rolled service locator. The graph is a handful of singletons with no configuration, so
@@ -17,6 +18,8 @@ import com.yukarlo.unlockmymac.pairing.PairingCoordinator
  */
 class AppContainer(
     context: Context,
+    /** How this form factor draws the service's notifications. See [UnlockNotifier]. */
+    val notifier: UnlockNotifier,
 ) {
     private val appContext = context.applicationContext
 

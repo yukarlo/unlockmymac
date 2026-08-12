@@ -13,7 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.yukarlo.unlockmymac.AppContainer
-import com.yukarlo.unlockmymac.R
+import com.yukarlo.unlockmymac.core.R
 import com.yukarlo.unlockmymac.ble.BleAdvertiser
 import com.yukarlo.unlockmymac.ble.GattContext
 import com.yukarlo.unlockmymac.ble.GattServerController
@@ -171,7 +171,7 @@ class BleUnlockService :
         runCatching { unregisterReceiver(bluetoothStateReceiver) }
         teardownRadio()
         appContainer.status.setServiceRunning(false)
-        UnlockNotifications.cancelApproval(this)
+        container.notifier.cancelApproval(this)
 
         if (stopRequestedByUser) {
             stopRequestedByUser = false
@@ -205,8 +205,8 @@ class BleUnlockService :
             return
         }
         NotificationManagerCompat.from(this).notify(
-            UnlockNotifications.APPROVAL_NOTIFICATION_ID,
-            UnlockNotifications.approvalRequest(this, pending.id, pairedMacName),
+            container.notifier.approvalNotificationId,
+            container.notifier.approvalRequest(this, pending.id, pairedMacName),
         )
     }
 
@@ -239,7 +239,7 @@ class BleUnlockService :
 
     override fun onApprovalNoLongerValid() {
         appContainer.status.setPendingApproval(null)
-        UnlockNotifications.cancelApproval(this)
+        container.notifier.cancelApproval(this)
     }
 
     override fun onPaired(
@@ -332,8 +332,8 @@ class BleUnlockService :
         runCatching {
             ServiceCompat.startForeground(
                 this,
-                UnlockNotifications.ONGOING_NOTIFICATION_ID,
-                UnlockNotifications.ongoing(this, text),
+                container.notifier.ongoingNotificationId,
+                container.notifier.ongoing(this, text),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
             )
         }.isSuccess
@@ -342,8 +342,8 @@ class BleUnlockService :
     private fun updateNotification(text: String) {
         if (!BlePermissions.hasNotifications(this)) return
         NotificationManagerCompat.from(this).notify(
-            UnlockNotifications.ONGOING_NOTIFICATION_ID,
-            UnlockNotifications.ongoing(this, text),
+            container.notifier.ongoingNotificationId,
+            container.notifier.ongoing(this, text),
         )
     }
 
