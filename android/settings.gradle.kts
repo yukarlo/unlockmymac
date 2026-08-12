@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "UnlockMyMac"
 include(":app")
- 
+include(":wear")
