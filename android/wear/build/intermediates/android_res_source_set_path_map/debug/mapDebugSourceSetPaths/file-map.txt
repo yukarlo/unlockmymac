@@ -1,7 +1,0 @@
-com.yukarlo.unlockmymac.wear-pngs-0 /Users/karloyu/Documents/personal/projects/UnlockMyMac/wear/build/generated/res/pngs/debug
-com.yukarlo.unlockmymac.wear-updated_navigation_xml-1 /Users/karloyu/Documents/personal/projects/UnlockMyMac/wear/build/generated/updated_navigation_xml/debug
-com.yukarlo.unlockmymac.wear-packageDebugResources-2 /Users/karloyu/Documents/personal/projects/UnlockMyMac/wear/build/intermediates/incremental/debug/packageDebugResources/merged.dir
-com.yukarlo.unlockmymac.wear-packageDebugResources-3 /Users/karloyu/Documents/personal/projects/UnlockMyMac/wear/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
-com.yukarlo.unlockmymac.wear-debug-4 /Users/karloyu/Documents/personal/projects/UnlockMyMac/wear/build/intermediates/merged_res/debug/mergeDebugResources
-com.yukarlo.unlockmymac.wear-debug-5 /Users/karloyu/Documents/personal/projects/UnlockMyMac/wear/src/debug/res
-com.yukarlo.unlockmymac.wear-main-6 /Users/karloyu/Documents/personal/projects/UnlockMyMac/wear/src/main/res

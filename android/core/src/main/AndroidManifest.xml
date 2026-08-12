@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Declared here rather than in each app module: BlePermissions and BleAdvertiser in this
+      library are what actually require them, so a consumer cannot forget one and discover it as a
+      runtime failure. Notification, foreground-service and camera permissions stay with the app
+      modules, which differ — the watch has no camera and posts its own approval prompt.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+
+    <uses-feature
+            android:name="android.hardware.bluetooth_le"
+            android:required="true"/>
+</manifest>
