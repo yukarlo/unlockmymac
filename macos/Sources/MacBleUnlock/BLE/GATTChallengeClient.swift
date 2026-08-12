@@ -385,8 +385,8 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             let nsError = error as NSError
             // 0x80 (128) is GATT status PENDING_APPROVAL returned when "Approve every request" is enabled on Android
             if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 128 {
-                log.notice("Android returned 0x80 PENDING_APPROVAL. User approval pending on phone, re-reading in 1.5s...")
-                EventLogger.shared.info(category: "GATT", "Awaiting user approval on Android phone (0x80)...")
+                log.notice("Phone is waiting for the user to approve; will re-read in 1.5s (ATT 0x80)")
+                EventLogger.shared.info(category: "Unlock", "Waiting for you to approve on your phone…")
 
                 // Arm 60s approval timeout once when approval pending is first encountered
                 if !isApprovalPending {
@@ -404,8 +404,8 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             // 0x82 (130) is DENIED — the user tapped Deny. Distinct from the opaque 0x81 so we
             // can back off properly instead of re-challenging and raising another prompt.
             if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 130 {
-                log.notice("Android returned 0x82 DENIED — user refused this unlock")
-                EventLogger.shared.warning(category: "GATT", "Unlock denied on the phone")
+                log.notice("Phone reported the request was denied by the user (ATT 0x82)")
+                EventLogger.shared.warning(category: "Unlock", "You denied this unlock on your phone — the Mac will not ask again for 2 minutes")
                 finish(.failure(.deniedByUser), for: peripheral, disconnect: true)
                 return
             }
