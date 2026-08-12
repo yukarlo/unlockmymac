@@ -207,11 +207,13 @@ final class GATTChallengeClient: NSObject {
             guard let self, self.activePeripheral === peripheral else { return }
             guard peripheral.state != .connected else { return }
 
+            let radio = self.radioContext(for: peripheral)
+
             guard self.connectAttempt < Self.maxConnectAttempts else {
-                self.log.notice("Connect stalled after \(self.connectAttempt) attempts; giving up")
+                self.log.notice("Connect stalled after \(self.connectAttempt) attempts; giving up (\(radio, privacy: .public))")
                 EventLogger.shared.warning(
                     category: "GATT",
-                    "Could not establish a connection after \(self.connectAttempt) attempts"
+                    "Could not establish a connection after \(self.connectAttempt) attempts (\(radio))"
                 )
                 // A connect that never completes and never fails is the signature of a link
                 // bluetoothd is holding on our behalf. Clear it so the next attempt is not
@@ -225,8 +227,8 @@ final class GATTChallengeClient: NSObject {
             self.bleCentral.cancelConnection(peripheral)
 
             self.connectAttempt += 1
-            self.log.notice("Connect stalled; retry \(self.connectAttempt) of \(Self.maxConnectAttempts)")
-            EventLogger.shared.info(category: "GATT", "Connection stalled, retrying")
+            self.log.notice("Connect stalled; retry \(self.connectAttempt) of \(Self.maxConnectAttempts) (\(radio, privacy: .public))")
+            EventLogger.shared.info(category: "GATT", "Connection stalled, retrying (\(radio))")
             self.bleCentral.queue.asyncAfter(deadline: .now() + Self.connectRetryDelaySeconds) { [weak self] in
                 guard let self, self.activePeripheral === peripheral else { return }
                 self.isRetryingConnect = false
@@ -236,6 +238,29 @@ final class GATTChallengeClient: NSObject {
         }
         connectWatchdog = workItem
         bleCentral.queue.asyncAfter(deadline: .now() + Self.connectWatchdogSeconds, execute: workItem)
+    }
+
+    /// Signal strength and advertisement freshness, for attaching to a stall report.
+    ///
+    /// A stall has two plausible causes that the log could not previously tell apart: a weak link
+    /// (see the RSSI correlation — clean at -57 dBm, marginal at -66, failing at -74), or the
+    /// stale address resolution described on `armConnectWatchdog`. They point at completely
+    /// different fixes, so both numbers are recorded rather than just the signal.
+    ///
+    /// "no recent advertisement" is the interesting case: it means the peripheral has already
+    /// aged out of `discoveredPeripherals`, which is direct evidence for the stale-address theory.
+    ///
+    /// Called from the watchdog, which runs on `bleCentral.queue` — the same queue that mutates
+    /// `discoveredPeripherals`, so this needs no further synchronisation.
+    private func radioContext(for peripheral: CBPeripheral) -> String {
+        guard let entry = bleCentral.discoveredPeripherals[peripheral.identifier] else {
+            return "no recent advertisement"
+        }
+        let age = String(format: "%.1f", Date().timeIntervalSince(entry.lastSeenAt))
+        guard let rssi = entry.averageRSSI else {
+            return "no RSSI yet, last advertised \(age)s ago"
+        }
+        return String(format: "%.1f dBm, last advertised %@s ago", rssi, age)
     }
 
     /// Aborts in-flight handshake.
