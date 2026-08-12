@@ -62,12 +62,16 @@ enum KeychainManager {
         getPassword() != nil
     }
 
-    /// Securely saves paired device record (including public key DER) to Keychain.
+    /// Securely saves the paired device records (including public key DER) to Keychain.
+    ///
+    /// Stored as one array under the original account name rather than an item per device: the
+    /// whole set is a few hundred bytes, and reusing the account means an existing single-device
+    /// record migrates by decode fallback in `getPairedDevices` instead of needing a migration step.
     @discardableResult
-    static func savePairedDevice(_ device: PairedDevice) -> Bool {
-        guard let data = try? JSONEncoder().encode(device) else { return false }
+    static func savePairedDevices(_ devices: [PairedDevice]) -> Bool {
+        guard let data = try? JSONEncoder().encode(devices) else { return false }
 
-        deletePairedDevice()
+        deletePairedDevices()
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -81,8 +85,11 @@ enum KeychainManager {
         return status == errSecSuccess
     }
 
-    /// Retrieves paired device record securely from Keychain.
-    static func getPairedDevice() -> PairedDevice? {
+    /// Retrieves the paired device records securely from Keychain.
+    ///
+    /// Falls back to decoding a single record so a Mac paired before multi-device support keeps
+    /// its phone: the old item is a bare `PairedDevice`, not an array.
+    static func getPairedDevices() -> [PairedDevice] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -94,16 +101,28 @@ enum KeychainManager {
         var dataTypeRef: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &dataTypeRef)
 
-        guard status == errSecSuccess, let data = dataTypeRef as? Data,
-              let device = try? JSONDecoder().decode(PairedDevice.self, from: data) else {
-            return nil
+        guard status == errSecSuccess, let data = dataTypeRef as? Data else {
+            return []
         }
-        return device
+        if let devices = try? JSONDecoder().decode([PairedDevice].self, from: data) {
+            return devices
+        }
+        if let legacy = try? JSONDecoder().decode(PairedDevice.self, from: data) {
+            EventLogger.shared.info(
+                category: "Pairing",
+                "Migrated single-device Keychain record to the multi-device format"
+            )
+            return [legacy]
+        }
+        // Data present but neither shape decoded: report it rather than silently reading as
+        // unpaired, which would look identical to a user who had never paired.
+        EventLogger.shared.error(category: "Pairing", "Keychain holds a paired-device record that could not be decoded")
+        return []
     }
 
-    /// Deletes paired device record from Keychain.
+    /// Deletes all paired device records from Keychain.
     @discardableResult
-    static func deletePairedDevice() -> Bool {
+    static func deletePairedDevices() -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

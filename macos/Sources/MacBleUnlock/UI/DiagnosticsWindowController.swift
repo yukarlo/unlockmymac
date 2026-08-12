@@ -36,7 +36,11 @@ struct DiagnosticsView: View {
                     Text("Paired Device")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text(pairingManager.pairedDevice?.name ?? "None")
+                    Text(
+                        pairingManager.pairedDevices.isEmpty
+                            ? "None"
+                            : pairingManager.pairedDevices.map(\.name).joined(separator: ", ")
+                    )
                         .font(.headline)
                 }
 

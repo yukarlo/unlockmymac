@@ -149,11 +149,17 @@ final class GATTChallengeClient: NSObject {
         super.init()
     }
 
-    /// Performs a full GATT authentication handshake against `peripheral` using paired device credentials.
+    /// Performs a full GATT authentication handshake against `peripheral`.
+    ///
+    /// `addressedTo` is the device the challenge names. With more than one device paired the Mac
+    /// cannot know which is on the other end — addresses rotate and are never identity — so it
+    /// picks one and lets the caller retry with another if this one answers `0x81`. A device that
+    /// is sent a challenge naming a different device rejects it in `validate`, before any session
+    /// exists, so a wrong guess costs a round trip and never raises a prompt on the wrong wrist.
     func authenticate(
         peripheral: CBPeripheral,
         macInstallationId: String,
-        pairedDevice: PairedDevice,
+        addressedTo pairedDevice: PairedDevice,
         completion: @escaping Completion
     ) {
         bleCentral.queue.async { [weak self] in
@@ -487,18 +493,31 @@ extension GATTChallengeClient: CBPeripheralDelegate {
 
         log.notice("Received \(signatureData.count)-byte ECDSA signature, verifying...")
 
-        // Retrieve paired device public key DER
+        // Verify against every authorised device, not just the one the challenge named.
+        //
+        // Which device answered is decided here and nowhere else: a signature that verifies under
+        // a stored public key proves the holder of that key signed these exact bytes. Trying each
+        // candidate costs about a millisecond apiece — the measured P-256 verify — and means the
+        // Mac never has to trust anything the peripheral says about its own identity.
         DispatchQueue.main.async { [weak self] in
-            guard let self, let pairedDevice = self.pairingManager.pairedDevice else {
-                self?.finish(.failure(.missingPairingData), for: peripheral, disconnect: true)
+            guard let self else { return }
+            let candidates = self.pairingManager.pairedDevices
+            guard !candidates.isEmpty else {
+                self.finish(.failure(.missingPairingData), for: peripheral, disconnect: true)
                 return
             }
 
-            let isValid = CryptoManager.verifySignature(
-                signatureData: signatureData,
-                messageData: payload,
-                publicKeyDER: pairedDevice.publicKeyDER
-            )
+            let matched = candidates.first { candidate in
+                CryptoManager.verifySignature(
+                    signatureData: signatureData,
+                    messageData: payload,
+                    publicKeyDER: candidate.publicKeyDER
+                )
+            }
+            let isValid = matched != nil
+            if let matched {
+                EventLogger.shared.info(category: "Auth", "Signature matched '\(matched.name)'")
+            }
 
             self.bleCentral.queue.async {
                 if isValid {

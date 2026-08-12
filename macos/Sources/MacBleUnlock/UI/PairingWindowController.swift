@@ -28,41 +28,53 @@ struct PairingView: View {
             Text("Android Device Pairing")
                 .font(.headline)
 
-            if let paired = pairingManager.pairedDevice {
+            if !pairingManager.pairedDevices.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                            .font(.title2)
-                        VStack(alignment: .leading) {
-                            Text("Paired Device")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            Text(paired.name)
-                                .font(.title3)
-                                .bold()
+                    Text(pairingManager.pairedDevices.count == 1 ? "Paired Device" : "Paired Devices")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    // One row per device, each independently removable: revoking a lost watch
+                    // must not force re-pairing the phone.
+                    ForEach(pairingManager.pairedDevices, id: \.deviceId) { paired in
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.title2)
+                            VStack(alignment: .leading) {
+                                Text(paired.name)
+                                    .font(.title3)
+                                    .bold()
+                                Text(paired.deviceId)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("Paired On: \(paired.pairedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button(role: .destructive) {
+                                pairingManager.unpair(deviceId: paired.deviceId)
+                                cachedQRImage = nil
+                                statusMessage = "Forgot \(paired.name)"
+                                isError = false
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
                         }
+                        Divider()
                     }
-
-                    Divider()
-
-                    Text("Device ID: \(paired.deviceId)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Text("Paired On: \(paired.pairedAt.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
 
                     Spacer()
 
                     Button(role: .destructive) {
-                        pairingManager.unpair()
+                        pairingManager.unpairAll()
                         cachedQRImage = nil
-                        statusMessage = "Device unpaired"
+                        statusMessage = "All devices unpaired"
                         isError = false
                     } label: {
-                        Label("Unpair Device", systemImage: "trash")
+                        Label("Unpair All Devices", systemImage: "trash")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -163,7 +175,7 @@ struct PairingView: View {
 
     private func attemptAutoBlePairing(peripherals: [UUID: DiscoveredPeripheral]) {
         guard !isBlePairingInFlight,
-              pairingManager.pairedDevice == nil,
+              !pairingManager.isPaired,
               let token = pairingManager.activePairingToken,
               let targetPeripheral = peripherals.values.first?.peripheral else { return }
 

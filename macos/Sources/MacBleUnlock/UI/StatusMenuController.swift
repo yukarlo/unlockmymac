@@ -37,7 +37,7 @@ final class StatusMenuController: NSObject {
         Publishers.CombineLatest4(
             bleCentral.$adapterState,
             stateMachine.$currentState,
-            pairingManager.$pairedDevice,
+            pairingManager.$pairedDevices,
             stateMachine.$isPaused
         )
         .receive(on: DispatchQueue.main)
@@ -88,8 +88,9 @@ final class StatusMenuController: NSObject {
         menu.addItem(.separator())
 
         // Paired device & signal info
-        if let paired = pairingManager.pairedDevice {
-            menu.addItem(disabledItem(title: "Paired: \(paired.name)"))
+        if !pairingManager.pairedDevices.isEmpty {
+            let names = pairingManager.pairedDevices.map(\.name).joined(separator: ", ")
+            menu.addItem(disabledItem(title: "Paired: \(names)"))
 
             let pairedEntry = bleCentral.discoveredPeripherals.values.first { entry in
                 if let authId = stateMachine.authenticatedPeripheralId {

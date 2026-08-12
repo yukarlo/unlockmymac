@@ -33,13 +33,26 @@ final class PairingManager: ObservableObject {
     /// Stable active QR payload JSON string.
     @Published private(set) var activeQRPayloadString: String?
 
-    /// Currently paired Android phone, or `nil` if unpaired.
-    @Published private(set) var pairedDevice: PairedDevice?
+    /// Every Android device authorised to unlock this Mac — typically a phone and a watch.
+    ///
+    /// A set rather than one device so a watch can hold its own key and unlock with the phone out
+    /// of range, and so either can be revoked without disturbing the other. The BLE address is
+    /// never identity, so which of these is on the other end of a connection is decided by which
+    /// public key verifies the signature, not by anything observed about the peripheral.
+    @Published private(set) var pairedDevices: [PairedDevice] = []
 
     private var sessionExpiresAtDate: Date?
 
     var isPaired: Bool {
-        pairedDevice != nil
+        !pairedDevices.isEmpty
+    }
+
+    /// Looks a device up by the identifier it claims.
+    ///
+    /// Compared case-insensitively to match `ChallengeCodec`, which does the same because Swift
+    /// uppercases UUIDs and Android does not.
+    func device(withId deviceId: String) -> PairedDevice? {
+        pairedDevices.first { $0.deviceId.caseInsensitiveCompare(deviceId) == .orderedSame }
     }
 
     init() {
@@ -52,15 +65,29 @@ final class PairingManager: ObservableObject {
             self.macInstallationId = newId
         }
 
-        // Load saved paired device securely from Keychain
-        if let device = KeychainManager.getPairedDevice() {
-            self.pairedDevice = device
+        // Load saved paired devices securely from Keychain
+        let stored = KeychainManager.getPairedDevices()
+        if !stored.isEmpty {
+            self.pairedDevices = stored
         } else if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
                   let legacyDevice = try? JSONDecoder().decode(PairedDevice.self, from: data) {
             // Migrate legacy record from UserDefaults to Keychain
-            KeychainManager.savePairedDevice(legacyDevice)
+            KeychainManager.savePairedDevices([legacyDevice])
             UserDefaults.standard.removeObject(forKey: userDefaultsKey)
-            self.pairedDevice = legacyDevice
+            self.pairedDevices = [legacyDevice]
+        }
+
+        // Logged unconditionally: a Keychain read that quietly returns nothing is
+        // indistinguishable from never having paired, and that difference matters after a change
+        // to the stored format.
+        if pairedDevices.isEmpty {
+            EventLogger.shared.info(category: "Pairing", "No paired devices loaded")
+        } else {
+            let names = pairedDevices.map(\.name).joined(separator: ", ")
+            EventLogger.shared.info(
+                category: "Pairing",
+                "Loaded \(pairedDevices.count) paired device(s): \(names)"
+            )
         }
     }
 
@@ -120,24 +147,53 @@ final class PairingManager: ObservableObject {
             publicKeyDER: publicKeyDER,
             pairedAt: Date()
         )
-        if KeychainManager.savePairedDevice(record) {
+
+        // Re-pairing a device the Mac already knows replaces its record rather than adding a
+        // second one: the phone mints a fresh identity key when it is unpaired and paired again,
+        // so keeping the old entry would leave a key nothing can sign for.
+        var updated = pairedDevices.filter {
+            $0.deviceId.caseInsensitiveCompare(deviceId) != .orderedSame
+        }
+        let replaced = updated.count != pairedDevices.count
+        updated.append(record)
+
+        if KeychainManager.savePairedDevices(updated) {
             DispatchQueue.main.async { [weak self] in
-                self?.pairedDevice = record
+                self?.pairedDevices = updated
                 self?.cancelPairingSession()
             }
-            EventLogger.shared.success(category: "Pairing", "Successfully paired with '\(name)' (\(deviceId))")
+            EventLogger.shared.success(
+                category: "Pairing",
+                "\(replaced ? "Re-paired" : "Paired") with '\(name)' (\(deviceId)); \(updated.count) device(s) authorised"
+            )
         }
     }
 
-    /// Removes existing paired device record from Keychain.
-    func unpair() {
-        let oldName = pairedDevice?.name ?? "device"
-        KeychainManager.deletePairedDevice()
+    /// Removes one paired device, leaving the others authorised.
+    func unpair(deviceId: String) {
+        guard let removed = device(withId: deviceId) else { return }
+        let updated = pairedDevices.filter {
+            $0.deviceId.caseInsensitiveCompare(deviceId) != .orderedSame
+        }
+        guard KeychainManager.savePairedDevices(updated) else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.pairedDevices = updated
+        }
+        EventLogger.shared.info(
+            category: "Pairing",
+            "Forgot device '\(removed.name)'; \(updated.count) device(s) still authorised"
+        )
+    }
+
+    /// Removes every paired device record from Keychain.
+    func unpairAll() {
+        let count = pairedDevices.count
+        KeychainManager.deletePairedDevices()
         UserDefaults.standard.removeObject(forKey: userDefaultsKey)
         DispatchQueue.main.async { [weak self] in
-            self?.pairedDevice = nil
+            self?.pairedDevices = []
             self?.cancelPairingSession()
         }
-        EventLogger.shared.info(category: "Pairing", "Unpaired device '\(oldName)'")
+        EventLogger.shared.info(category: "Pairing", "Forgot all \(count) paired device(s)")
     }
 }

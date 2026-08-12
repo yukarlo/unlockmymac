@@ -282,7 +282,7 @@ final class PresenceStateMachine: ObservableObject {
     /// bursty BLE reception can no longer be mistaken for the phone leaving, because nothing is
     /// watching for the phone leaving any more.
     private func beginScanningForUnlock() {
-        guard !isPaused, pairingManager.pairedDevice != nil else { return }
+        guard !isPaused, pairingManager.isPaired else { return }
         EventLogger.shared.info(category: "State", "Screen locked — scanning for the paired phone")
         bleCentral.start()
 
@@ -308,8 +308,17 @@ final class PresenceStateMachine: ObservableObject {
         transitionTo(.absent)
     }
 
+    /// Which paired device the next challenge should name.
+    ///
+    /// The Mac cannot tell who it has connected to before it asks — addresses rotate and are never
+    /// identity — so it addresses one device and accepts a rejection as "try the other". Whoever
+    /// actually answers is established by which stored public key verifies the signature.
+    private func challengeTarget() -> PairedDevice? {
+        pairingManager.pairedDevices.first
+    }
+
     private func evaluatePresence() {
-        guard !isPaused, let paired = pairingManager.pairedDevice else {
+        guard !isPaused, let paired = challengeTarget() else {
             if currentState != .absent {
                 transitionTo(.absent)
             }
@@ -424,7 +433,7 @@ final class PresenceStateMachine: ObservableObject {
         gattClient.authenticate(
             peripheral: peripheral,
             macInstallationId: pairingManager.macInstallationId,
-            pairedDevice: paired
+            addressedTo: paired
         ) { [weak self] result in
             guard let self else { return }
 
@@ -518,7 +527,7 @@ final class PresenceStateMachine: ObservableObject {
             guard let self,
                   self.currentState == .unlockCooldown,
                   self.shouldChallengeNow,
-                  let paired = self.pairingManager.pairedDevice else { return }
+                  let paired = self.challengeTarget() else { return }
 
             // Back off once auto-unlock can no longer act. Each beat is a full
             // connect/authenticate/disconnect, and every disconnect makes the phone restart
@@ -535,7 +544,7 @@ final class PresenceStateMachine: ObservableObject {
                 self.gattClient.authenticate(
                     peripheral: entry.peripheral,
                     macInstallationId: self.pairingManager.macInstallationId,
-                    pairedDevice: paired
+                    addressedTo: paired
                 ) { [weak self] result in
                     guard let self else { return }
                     switch result {
