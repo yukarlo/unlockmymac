@@ -207,7 +207,10 @@ struct PairingView: View {
 
         // Scanning normally runs only while the Mac is locked, so by the time the user is sitting
         // here clicking, nothing has been discovered and the radio is off. Bring it up for this
-        // one operation and put it back afterwards.
+        // one operation — and remember whether it was already running, because locking the Mac
+        // mid-enrolment would otherwise leave auto-unlock with its radio switched off underneath
+        // it until the next lock.
+        let wasScanning = bleCentral.isScanning
         bleCentral.start()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.enrolmentScanSeconds) {
@@ -217,7 +220,7 @@ struct PairingView: View {
 
             guard let target = candidates.first else {
                 isEnrolmentInFlight = false
-                bleCentral.stop()
+                if !wasScanning { bleCentral.stop() }
                 statusMessage = "No paired device is in range"
                 isError = true
                 return
@@ -226,7 +229,7 @@ struct PairingView: View {
             statusMessage = "Asking \(target.name ?? "your device") if it is vouching for anything…"
             gattEnrolmentClient.readOffer(from: target) { result in
                 isEnrolmentInFlight = false
-                bleCentral.stop()
+                if !wasScanning { bleCentral.stop() }
                 switch result {
                 case .success(let device):
                     statusMessage = "Added \(device.name)"
