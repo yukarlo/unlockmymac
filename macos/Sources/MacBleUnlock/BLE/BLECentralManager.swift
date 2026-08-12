@@ -130,7 +130,7 @@ final class BLECentralManager: NSObject, ObservableObject {
 
     private func handleSystemWake() {
         guard wantsScanning else { return }
-        log.info("System woke; restarting scan and dropping stale peripherals")
+        log.notice("System woke; restarting scan and dropping stale peripherals")
         EventLogger.shared.info(category: "BLE", "Woke from sleep — rescanning")
 
         // Every entry predates the sleep, and Android has rotated its private address at least
@@ -159,7 +159,7 @@ final class BLECentralManager: NSObject, ObservableObject {
                 withServices: [BLEProtocol.serviceUUID]
             )
             guard !held.isEmpty else { return }
-            self.log.info("Reclaiming \(held.count) system-held connection(s)")
+            self.log.notice("Reclaiming \(held.count) system-held connection(s)")
             EventLogger.shared.info(
                 category: "BLE",
                 "Clearing \(held.count) stale Bluetooth connection(s) held by macOS"
@@ -178,7 +178,7 @@ final class BLECentralManager: NSObject, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.discoveredPeripherals[peripheralId] != nil else { return }
             self.discoveredPeripherals.removeValue(forKey: peripheralId)
-            self.log.info("Forgot unreachable peripheral \(peripheralId.uuidString, privacy: .public)")
+            self.log.notice("Forgot unreachable peripheral \(peripheralId.uuidString, privacy: .public)")
         }
     }
 
@@ -197,7 +197,7 @@ final class BLECentralManager: NSObject, ObservableObject {
                 withServices: [BLEProtocol.serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
             )
-            self.log.info("Scan restarted")
+            self.log.notice("Scan restarted")
             DispatchQueue.main.async { [weak self] in
                 self?.isScanning = true
             }
@@ -271,7 +271,7 @@ final class BLECentralManager: NSObject, ObservableObject {
                 withServices: [BLEProtocol.serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates]
             )
-            self.log.info("Updated scan mode (allowDuplicates: \(allowDuplicates))")
+            self.log.notice("Updated scan mode (allowDuplicates: \(allowDuplicates))")
         }
     }
 
@@ -285,7 +285,7 @@ final class BLECentralManager: NSObject, ObservableObject {
                 withServices: [BLEProtocol.serviceUUID],
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
             )
-            self.log.info("Started scanning for service \(BLEProtocol.serviceUUID.uuidString, privacy: .public)")
+            self.log.notice("Started scanning for service \(BLEProtocol.serviceUUID.uuidString, privacy: .public)")
 
             DispatchQueue.main.async { [weak self] in
                 self?.isScanning = true
@@ -331,7 +331,7 @@ extension BLECentralManager: CBCentralManagerDelegate {
         case .poweredOn: mapped = .poweredOn
         @unknown default: mapped = .unknown
         }
-        log.info("Central manager state changed to \(mapped.rawValue, privacy: .public)")
+        log.notice("Central manager state changed to \(mapped.rawValue, privacy: .public)")
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -392,17 +392,17 @@ extension BLECentralManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        log.info("Connected to \(peripheral.identifier.uuidString, privacy: .public)")
+        log.notice("Connected to \(peripheral.identifier.uuidString, privacy: .public)")
         connectionDelegate?.bleCentral(self, didConnect: peripheral)
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        log.info("Failed to connect to \(peripheral.identifier.uuidString, privacy: .public): \(String(describing: error), privacy: .public)")
+        log.notice("Failed to connect to \(peripheral.identifier.uuidString, privacy: .public): \(String(describing: error), privacy: .public)")
         connectionDelegate?.bleCentral(self, didFailToConnect: peripheral, error: error)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        log.info("Disconnected from \(peripheral.identifier.uuidString, privacy: .public)")
+        log.notice("Disconnected from \(peripheral.identifier.uuidString, privacy: .public)")
         connectionDelegate?.bleCentral(self, didDisconnect: peripheral, error: error)
     }
 }

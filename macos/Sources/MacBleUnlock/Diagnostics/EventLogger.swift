@@ -9,10 +9,16 @@ enum LogSeverity: String, Codable {
     case warning = "WARN"
     case error = "ERROR"
 
+    /// Deliberately never `.info`.
+    ///
+    /// `.info` entries live only in the in-memory ring and roll out within minutes, so an
+    /// overnight failure leaves nothing behind — after an eleven-hour wedge only the handful of
+    /// warning/error lines survived and the trace had to be reconstructed from the phone.
+    /// `.default` is persisted to disk, which is what makes `log show --last 12h` useful.
+    /// Event volume here is a few lines per unlock, so the cost is negligible.
     var osLogType: OSLogType {
         switch self {
-        case .info, .success: return .info
-        case .warning: return .default
+        case .info, .success, .warning: return .default
         case .error: return .error
         }
     }

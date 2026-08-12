@@ -172,7 +172,7 @@ final class GATTChallengeClient: NSObject {
 
             self.scheduleTimeout()
             self.connectAttempt = 1
-            self.log.info("Connecting to \(peripheral.identifier.uuidString, privacy: .public) for GATT authentication")
+            self.log.notice("Connecting to \(peripheral.identifier.uuidString, privacy: .public) for GATT authentication")
             EventLogger.shared.info(category: "GATT", "Initiating challenge handshake with \(pairedDevice.name)")
             self.bleCentral.connect(peripheral)
             self.armConnectWatchdog(for: peripheral)
@@ -196,7 +196,7 @@ final class GATTChallengeClient: NSObject {
             guard peripheral.state != .connected else { return }
 
             guard self.connectAttempt < Self.maxConnectAttempts else {
-                self.log.info("Connect stalled after \(self.connectAttempt) attempts; giving up")
+                self.log.notice("Connect stalled after \(self.connectAttempt) attempts; giving up")
                 EventLogger.shared.warning(
                     category: "GATT",
                     "Could not establish a connection after \(self.connectAttempt) attempts"
@@ -213,7 +213,7 @@ final class GATTChallengeClient: NSObject {
             self.bleCentral.cancelConnection(peripheral)
 
             self.connectAttempt += 1
-            self.log.info("Connect stalled; retry \(self.connectAttempt) of \(Self.maxConnectAttempts)")
+            self.log.notice("Connect stalled; retry \(self.connectAttempt) of \(Self.maxConnectAttempts)")
             EventLogger.shared.info(category: "GATT", "Connection stalled, retrying")
             self.bleCentral.queue.asyncAfter(deadline: .now() + Self.connectRetryDelaySeconds) { [weak self] in
                 guard let self, self.activePeripheral === peripheral else { return }
@@ -238,7 +238,7 @@ final class GATTChallengeClient: NSObject {
         timeoutWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, let peripheral = self.activePeripheral else { return }
-            self.log.info("GATT round trip timed out")
+            self.log.notice("GATT round trip timed out")
             EventLogger.shared.warning(category: "GATT", "Handshake timed out")
             self.finish(.failure(.timedOut), for: peripheral, disconnect: true)
         }
@@ -295,7 +295,7 @@ extension GATTChallengeClient: BLEPeripheralConnectionDelegate {
         guard peripheral === activePeripheral else { return }
         connectWatchdog?.cancel()
         connectWatchdog = nil
-        log.info("Connected, discovering unlock service")
+        log.notice("Connected, discovering unlock service")
         peripheral.discoverServices([BLEProtocol.serviceUUID])
     }
 
@@ -309,7 +309,7 @@ extension GATTChallengeClient: BLEPeripheralConnectionDelegate {
 
     func bleCentralDidInvalidateConnections(_ manager: BLECentralManager) {
         guard let peripheral = activePeripheral else { return }
-        log.info("Radio invalidated all connections; abandoning in-flight handshake")
+        log.notice("Radio invalidated all connections; abandoning in-flight handshake")
         EventLogger.shared.info(category: "GATT", "Bluetooth went away — abandoning handshake")
         finish(.failure(.disconnected(nil)), for: peripheral, disconnect: false)
     }
@@ -361,7 +361,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
         }
 
         self.responseCharacteristic = responseCharacteristic
-        log.info("Writing structured challenge payload")
+        log.notice("Writing structured challenge payload")
         peripheral.writeValue(payload, for: challengeCharacteristic, type: .withResponse)
     }
 
@@ -375,7 +375,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             finish(.failure(.characteristicNotFound), for: peripheral, disconnect: true)
             return
         }
-        log.info("Challenge payload written, reading response signature")
+        log.notice("Challenge payload written, reading response signature")
         peripheral.readValue(for: responseCharacteristic)
     }
 
@@ -385,7 +385,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             let nsError = error as NSError
             // 0x80 (128) is GATT status PENDING_APPROVAL returned when "Approve every request" is enabled on Android
             if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 128 {
-                log.info("Android returned 0x80 PENDING_APPROVAL. User approval pending on phone, re-reading in 1.5s...")
+                log.notice("Android returned 0x80 PENDING_APPROVAL. User approval pending on phone, re-reading in 1.5s...")
                 EventLogger.shared.info(category: "GATT", "Awaiting user approval on Android phone (0x80)...")
 
                 // Arm 60s approval timeout once when approval pending is first encountered
@@ -404,7 +404,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             // 0x82 (130) is DENIED — the user tapped Deny. Distinct from the opaque 0x81 so we
             // can back off properly instead of re-challenging and raising another prompt.
             if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 130 {
-                log.info("Android returned 0x82 DENIED — user refused this unlock")
+                log.notice("Android returned 0x82 DENIED — user refused this unlock")
                 EventLogger.shared.warning(category: "GATT", "Unlock denied on the phone")
                 finish(.failure(.deniedByUser), for: peripheral, disconnect: true)
                 return
@@ -423,7 +423,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             return
         }
 
-        log.info("Received \(signatureData.count)-byte ECDSA signature, verifying...")
+        log.notice("Received \(signatureData.count)-byte ECDSA signature, verifying...")
 
         // Retrieve paired device public key DER
         DispatchQueue.main.async { [weak self] in
@@ -440,7 +440,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
 
             self.bleCentral.queue.async {
                 if isValid {
-                    self.log.info("Signature successfully verified!")
+                    self.log.notice("Signature successfully verified!")
                     EventLogger.shared.success(category: "Crypto", "P-256 signature verified successfully")
                     self.finish(.success(true), for: peripheral, disconnect: true)
                 } else {

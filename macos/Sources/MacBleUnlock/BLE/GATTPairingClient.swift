@@ -42,7 +42,7 @@ final class GATTPairingClient: NSObject {
             self.bleCentral.connectionDelegate = self
 
             self.scheduleTimeout()
-            self.log.info("Connecting to \(peripheral.identifier.uuidString, privacy: .public) for GATT pairing exchange")
+            self.log.notice("Connecting to \(peripheral.identifier.uuidString, privacy: .public) for GATT pairing exchange")
             EventLogger.shared.info(category: "Pairing", "Connecting over BLE to complete pairing...")
             self.bleCentral.connect(peripheral)
         }
@@ -97,7 +97,7 @@ extension GATTPairingClient: BLEPeripheralConnectionDelegate {
 
     func bleCentral(_ manager: BLECentralManager, didConnect peripheral: CBPeripheral) {
         guard peripheral === activePeripheral else { return }
-        log.info("Connected for pairing, discovering unlock service")
+        log.notice("Connected for pairing, discovering unlock service")
         peripheral.discoverServices([BLEProtocol.serviceUUID])
     }
 
@@ -108,7 +108,7 @@ extension GATTPairingClient: BLEPeripheralConnectionDelegate {
 
     func bleCentralDidInvalidateConnections(_ manager: BLECentralManager) {
         guard let peripheral = activePeripheral else { return }
-        log.info("Radio invalidated all connections; abandoning pairing exchange")
+        log.notice("Radio invalidated all connections; abandoning pairing exchange")
         finish(
             .failure(NSError(domain: "GATTPairingClient", code: -10, userInfo: [
                 NSLocalizedDescriptionKey: "Bluetooth became unavailable during pairing",
@@ -159,7 +159,7 @@ extension GATTPairingClient: CBPeripheralDelegate {
         """
 
         self.pairingCharacteristic = characteristic
-        log.info("Writing pairing claim payload")
+        log.notice("Writing pairing claim payload")
         peripheral.writeValue(Data(claimPayload.utf8), for: characteristic, type: .withResponse)
     }
 
@@ -169,7 +169,7 @@ extension GATTPairingClient: CBPeripheralDelegate {
             finish(.failure(error), for: peripheral, disconnect: true)
             return
         }
-        log.info("Pairing claim written, reading phone identity response")
+        log.notice("Pairing claim written, reading phone identity response")
         peripheral.readValue(for: characteristic)
     }
 
@@ -212,7 +212,7 @@ extension GATTPairingClient: CBPeripheralDelegate {
             return
         }
 
-        log.info("Successfully received identity from phone '\(name)' (\(deviceId))")
+        log.notice("Successfully received identity from phone '\(name)' (\(deviceId))")
         pairingManager.pair(deviceId: deviceId, name: name, publicKeyDER: derData)
 
         let pairedRecord = PairedDevice(deviceId: deviceId, name: name, publicKeyDER: derData, pairedAt: Date())

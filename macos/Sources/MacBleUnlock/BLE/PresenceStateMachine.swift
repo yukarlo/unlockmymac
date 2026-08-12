@@ -379,7 +379,7 @@ final class PresenceStateMachine: ObservableObject {
                 // Not a failure: another handshake owns the radio and will report its own
                 // result. Resetting the state here is what caused the thrash loop — it made
                 // the state machine believe it was idle and immediately try again.
-                self.log.info("Handshake already in progress; leaving the running one alone")
+                self.log.notice("Handshake already in progress; leaving the running one alone")
 
             case .failure(let error):
                 // The watchdog already retried twice, so this handle is dead — drop it or the
@@ -509,7 +509,7 @@ final class PresenceStateMachine: ObservableObject {
         EventLogger.shared.info(category: "State", "Presence state changed: \(oldState) → \(newState)")
         // Also to the unified log, so state changes can be correlated with GATT timings in a
         // `log stream` capture rather than only being visible in the in-app Diagnostics window.
-        log.info("State \(oldState.rawValue, privacy: .public) → \(newState.rawValue, privacy: .public)")
+        log.notice("State \(oldState.rawValue, privacy: .public) → \(newState.rawValue, privacy: .public)")
 
         if newState == .absent {
             stopHeartbeatTimer()
