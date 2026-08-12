@@ -154,10 +154,14 @@ class BleUnlockService :
         startId: Int,
     ): Int {
         super.onStartCommand(intent, flags, startId)
-        if (intent?.action == ACTION_RESOLVE_APPROVAL) {
-            val id = intent.getLongExtra(EXTRA_CHALLENGE_ID, -1L)
-            val approved = intent.getBooleanExtra(EXTRA_APPROVED, false)
-            if (id >= 0) gattServer.resolveApproval(id, approved)
+        when (intent?.action) {
+            ACTION_RESOLVE_APPROVAL -> {
+                val id = intent.getLongExtra(EXTRA_CHALLENGE_ID, -1L)
+                val approved = intent.getBooleanExtra(EXTRA_APPROVED, false)
+                if (id >= 0) gattServer.resolveApproval(id, approved)
+            }
+
+            ACTION_FORCE_RESET -> forceReset()
         }
         // START_STICKY: if the system kills us for memory, come back and resume advertising.
         return START_STICKY
@@ -296,6 +300,34 @@ class BleUnlockService :
         gattServer.close()
     }
 
+    /**
+     * Full manual reset of the BLE stack on this side.
+     *
+     * The escape hatch for the state neither app can detect: both report themselves healthy —
+     * service running, advertising, GATT server open, the Mac even showing the phone as
+     * connected — yet no challenge ever arrives because a link is half-open somewhere below.
+     *
+     * Hanging up on the centrals is what reaches the Mac: it sees the disconnect, tears down its
+     * own session, and reconnects from scratch on the next advertisement. The rest clears any
+     * stale state here, and the new advertising set gets a fresh address.
+     */
+    private fun forceReset() {
+        appContainer.eventLog.warn("Manual reset requested — restarting BLE from scratch")
+
+        val dropped = gattServer.disconnectAllCentrals()
+        if (dropped > 0) {
+            appContainer.eventLog.info("Dropped $dropped connected central(s)")
+        }
+
+        appContainer.sessions.clear()
+        onApprovalNoLongerValid()
+
+        teardownRadio()
+        applyState()
+
+        appContainer.eventLog.info("Reset complete — advertising restarted")
+    }
+
     private fun startForegroundWithStatus(text: String): Boolean =
         runCatching {
             ServiceCompat.startForeground(
@@ -317,6 +349,7 @@ class BleUnlockService :
 
     companion object {
         const val ACTION_RESOLVE_APPROVAL = "com.yukarlo.unlockmymac.RESOLVE_APPROVAL"
+        const val ACTION_FORCE_RESET = "com.yukarlo.unlockmymac.FORCE_RESET"
         const val EXTRA_CHALLENGE_ID = "challenge_id"
         const val EXTRA_APPROVED = "approved"
 
@@ -344,6 +377,13 @@ class BleUnlockService :
         fun stop(context: Context) {
             stopRequestedByUser = true
             context.stopService(Intent(context, BleUnlockService::class.java))
+        }
+
+        /** Tears the BLE stack down and back up. No-ops if the service is not running. */
+        fun forceReset(context: Context) {
+            context.startService(
+                Intent(context, BleUnlockService::class.java).setAction(ACTION_FORCE_RESET),
+            )
         }
 
         /** Approve or deny from the UI. No-ops if the service is not running. */

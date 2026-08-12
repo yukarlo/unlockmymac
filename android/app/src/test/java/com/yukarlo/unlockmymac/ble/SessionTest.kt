@@ -215,6 +215,30 @@ class ChallengeSessionsTest {
     }
 
     @Test
+    fun `a fresh challenge is accepted after the previous one expired unanswered`() {
+        // The scenario that matters: a prompt is ignored, the challenge dies, and the next time
+        // the Mac comes into range the whole flow has to work as if nothing happened.
+        sessions.offer("aa", request(1), ttlMs = 60_000, requiresApproval = true)
+        clock.advance(120_000)
+        sessions.sweepExpired()
+
+        // Next contact — new connection, new challenge, approval, signature.
+        assertNull(sessions.offer("bb", request(2), ttlMs = 60_000, requiresApproval = true))
+        val pending = sessions.awaitingApproval().single()
+        sessions.setApproval(pending.id, approved = true)
+        assertTrue(sessions.claimForSigning("bb") is ChallengeSessions.Result.Sign)
+    }
+
+    @Test
+    fun `an abandoned challenge does not block the next one even without a sweep`() {
+        // Nothing guarantees the sweep ran first, so `offer` must prune on its own.
+        sessions.offer("aa", request(1), ttlMs = 60_000, requiresApproval = true)
+        clock.advance(120_000)
+
+        assertNull(sessions.offer("bb", request(2), ttlMs = 60_000, requiresApproval = true))
+    }
+
+    @Test
     fun `approval is single shot`() {
         sessions.offer("aa", request(1), ttlMs = 60_000, requiresApproval = true)
         val pending = sessions.awaitingApproval().single()

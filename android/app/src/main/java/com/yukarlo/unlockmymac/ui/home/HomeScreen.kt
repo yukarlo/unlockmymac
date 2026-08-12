@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -195,7 +196,13 @@ fun HomeScreen(
             val heroBadge = resolveHeroBadge(state.bluetoothOn, state.status.advertising, settings?.paused == true)
             HeroStatusCard(
                 title = state.pairedMac?.name ?: stringResource(R.string.home_not_paired),
-                subtitle = resolveHeroSubtitle(state.bluetoothOn, state.status.advertising, state.pairedMac != null, settings?.paused == true),
+                subtitle =
+                    resolveHeroSubtitle(
+                        state.bluetoothOn,
+                        state.status.advertising,
+                        state.pairedMac != null,
+                        settings?.paused == true,
+                    ),
                 badgeText = heroBadge.text,
                 badgeColor = heroBadge.color,
                 icon = if (state.status.connectedCentrals > 0) Icons.Default.BluetoothConnected else Icons.Default.Computer,
@@ -300,6 +307,28 @@ fun HomeScreen(
                         },
                     ),
                     fontWeight = FontWeight.Bold,
+                )
+            }
+
+            // Only useful while the peripheral is meant to be up — resetting a stopped service
+            // would do nothing and just look broken.
+            if (state.settings?.serviceEnabled == true) {
+                OutlinedButton(
+                    onClick = viewModel::forceReset,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 6.dp),
+                    )
+                    Text(stringResource(R.string.home_reset_button), fontWeight = FontWeight.Medium)
+                }
+                Text(
+                    text = stringResource(R.string.home_reset_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 

@@ -150,6 +150,31 @@ class GattServerController(
         eventLog.info("GATT server closed")
     }
 
+    /**
+     * Hangs up on every connected central.
+     *
+     * Used by the manual reset. A central that has gone away without a clean disconnect leaves
+     * the link half-open on one or both sides; the Mac then cannot reconnect and no challenge
+     * ever arrives, while both apps still report themselves healthy. Dropping the link forces
+     * the stack on both ends to start over.
+     */
+    @SuppressLint("MissingPermission") // Same permission as opening the server.
+    fun disconnectAllCentrals(): Int {
+        val server = gattServer ?: return 0
+        val devices = connected.toList()
+        for (address in devices) {
+            val device = runCatching { adapterFor(address) }.getOrNull() ?: continue
+            runCatching { server.cancelConnection(device) }
+                .onFailure { Log.w(TAG, "cancelConnection threw", it) }
+        }
+        connected.clear()
+        status.setConnectedCentrals(0)
+        return devices.size
+    }
+
+    private fun adapterFor(address: String): BluetoothDevice? =
+        context.getSystemService(BluetoothManager::class.java)?.adapter?.getRemoteDevice(address)
+
     /** Approves or denies a parked challenge. Called from the UI or the notification action. */
     fun resolveApproval(
         id: Long,

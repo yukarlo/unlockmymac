@@ -168,5 +168,16 @@ class HomeViewModel(
         BleUnlockService.resolveApproval(app, id, approved)
     }
 
+    /**
+     * Tears the BLE stack down and back up, and hangs up on any connected Mac.
+     *
+     * The escape hatch for the state where both apps look healthy but no challenge ever
+     * arrives, because a link is half-open below the app layer. Dropping the connection is what
+     * reaches the Mac — it sees the disconnect and starts over on the next advertisement.
+     */
+    fun forceReset() {
+        BleUnlockService.forceReset(app)
+    }
+
     private fun isBluetoothOn(): Boolean = app.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true
 }
