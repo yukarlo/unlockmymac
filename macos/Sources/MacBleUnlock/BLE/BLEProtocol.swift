@@ -20,6 +20,10 @@ enum BLEProtocol {
     /// Write + Read characteristic used for zero-touch BLE pairing.
     static let pairingCharacteristicUUID = CBUUID(string: "f9a2b8e3-54cd-4e92-a123-765432198768")
 
+    /// A paired device serves a signed offer here vouching for another device's public key.
+    /// Read only when the user asks to add a device; empty the rest of the time.
+    static let enrolmentCharacteristicUUID = CBUUID(string: "f9a2b8e3-54cd-4e92-a123-765432198769")
+
     /// Number of RSSI samples kept for rolling-average smoothing (plan section 8).
     static let rssiSampleWindow = 5
 

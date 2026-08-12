@@ -12,15 +12,18 @@ struct PairingView: View {
     @State private var inputPublicKeyBase64: String = ""
     @State private var statusMessage: String?
     @State private var isError: Bool = false
+    @State private var isEnrolmentInFlight = false
     @State private var isBlePairingInFlight: Bool = false
     @State private var cachedQRImage: NSImage?
 
     private let gattPairingClient: GATTPairingClient
+    private let gattEnrolmentClient: GATTEnrolmentClient
 
     init(pairingManager: PairingManager, bleCentral: BLECentralManager) {
         self.pairingManager = pairingManager
         self.bleCentral = bleCentral
         self.gattPairingClient = GATTPairingClient(bleCentral: bleCentral, pairingManager: pairingManager)
+        self.gattEnrolmentClient = GATTEnrolmentClient(bleCentral: bleCentral, pairingManager: pairingManager)
     }
 
     var body: some View {
@@ -67,6 +70,17 @@ struct PairingView: View {
                     }
 
                     Spacer()
+
+                    // Enrolment, not pairing: a watch has no camera, so an already-paired
+                    // device signs for it and this reads that signature over BLE.
+                    Button {
+                        addVouchedDevice()
+                    } label: {
+                        Label("Add a device", systemImage: "plus.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isEnrolmentInFlight)
 
                     Button(role: .destructive) {
                         pairingManager.unpairAll()
@@ -170,6 +184,37 @@ struct PairingView: View {
         guard cachedQRImage == nil else { return }
         if let jsonString = pairingManager.startPairingSession() {
             cachedQRImage = generateQRCodeImage(from: jsonString)
+        }
+    }
+
+    /// Asks an already-paired device whether it is vouching for another one.
+    ///
+    /// Reads from whichever paired device is currently in range: the offer names the Mac and is
+    /// signed, so a device that has nothing staged simply answers "nothing to enrol" and the next
+    /// one is tried. Nothing is trusted because of which peripheral answered.
+    private func addVouchedDevice() {
+        guard !isEnrolmentInFlight else { return }
+        let candidates = bleCentral.discoveredPeripherals.values.map(\.peripheral)
+        guard let target = candidates.first else {
+            statusMessage = "No paired device is in range"
+            isError = true
+            return
+        }
+
+        isEnrolmentInFlight = true
+        statusMessage = "Asking \(target.name ?? "your device") if it is vouching for anything…"
+        isError = false
+
+        gattEnrolmentClient.readOffer(from: target) { result in
+            isEnrolmentInFlight = false
+            switch result {
+            case .success(let device):
+                statusMessage = "Added \(device.name)"
+                isError = false
+            case .failure(let error):
+                statusMessage = error.description
+                isError = true
+            }
         }
     }
 
