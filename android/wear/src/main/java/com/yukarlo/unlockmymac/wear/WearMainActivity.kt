@@ -30,6 +30,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.Chip
 import com.yukarlo.unlockmymac.container
+import com.yukarlo.unlockmymac.data.AdvertiseMode
 import com.yukarlo.unlockmymac.permissions.BlePermissions
 import com.yukarlo.unlockmymac.service.BleUnlockService
 import kotlinx.coroutines.launch
@@ -135,6 +136,23 @@ private fun WearHome() {
             },
             label = { Text(context.getString(R.string.home_require_approval)) },
             secondaryLabel = { Text(if (requireApproval) "On" else "Off") },
+        )
+
+        // Discovery is the dominant cost of a watch unlock — 4.32s of a measured 7.36s, because
+        // low power advertises about once a second. Left off by default all the same: this is a
+        // watch battery, and that trade is the wearer's to make, not a default to impose.
+        val fastDiscovery = settings?.advertiseMode == AdvertiseMode.BALANCED
+        Chip(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = {
+                scope.launch {
+                    container.settings.setAdvertiseMode(
+                        if (fastDiscovery) AdvertiseMode.LOW_POWER else AdvertiseMode.BALANCED,
+                    )
+                }
+            },
+            label = { Text(context.getString(R.string.home_fast_discovery)) },
+            secondaryLabel = { Text(if (fastDiscovery) "On" else "Off") },
         )
 
         Text(
