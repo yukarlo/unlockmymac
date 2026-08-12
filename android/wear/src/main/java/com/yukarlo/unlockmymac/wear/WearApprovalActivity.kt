@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.VibratorManager
 import android.util.Log
-import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.Lifecycle
@@ -39,10 +38,15 @@ import com.yukarlo.unlockmymac.service.BleUnlockService
  * reaching for a phone, and that advantage disappears if it needs a precise tap on a 40mm screen.
  * Hence one target filling most of the display.
  *
- * What a given watch actually delivers had to be measured. On a Galaxy Watch 6 the upper button
- * is Home and never reaches an app at all; the lower one arrives as `KEYCODE_BACK`. Stem codes are
- * still accepted for watches that have a spare button, and anything unrecognised is logged so the
- * next piece of hardware can be answered from a log rather than a guess.
+ * Answered by tapping, not by the physical buttons. Measured on a Galaxy Watch 6: the upper
+ * button is Home and never reaches an app, and the lower one arrives as `KEYCODE_BACK` — which
+ * from API 36 the platform is moving behind predictive back, where a gesture no longer dispatches
+ * that key at all. Building the one security-relevant decision in this app on a key the platform
+ * is in the middle of reclaiming is not worth the convenience.
+ *
+ * Pressing Back therefore just closes this screen, which is not an answer: the challenge is left
+ * to expire rather than being denied, so the Mac keeps asking for the rest of its window instead
+ * of starting a backoff. Deny deliberately if you mean it.
  *
  * Back denies rather than approves, deliberately. It is the reflexive dismiss gesture, so binding
  * it to approve would mean a stray press silently unlocking the Mac — the exact opposite of what
@@ -140,38 +144,6 @@ class WearApprovalActivity : ComponentActivity() {
             }
         }
     }
-
-    override fun onKeyDown(
-        keyCode: Int,
-        event: KeyEvent?,
-    ): Boolean =
-        when (keyCode) {
-            KeyEvent.KEYCODE_STEM_PRIMARY,
-            KeyEvent.KEYCODE_STEM_1,
-            KeyEvent.KEYCODE_STEM_2,
-            KeyEvent.KEYCODE_STEM_3,
-            -> {
-                // Only reachable on hardware with a spare stem button; a Watch 6 has none.
-                Log.i(TAG, "Approved by stem button (keycode $keyCode)")
-                resolve(approved = true)
-                true
-            }
-
-            KeyEvent.KEYCODE_BACK -> {
-                // Answering "no" rather than leaving the challenge to time out means the Mac
-                // starts its denial backoff immediately instead of polling for another minute.
-                Log.i(TAG, "Denied by the back button")
-                resolve(approved = false)
-                true
-            }
-
-            else -> {
-                // Recorded rather than swallowed: the only reliable way to find out what this
-                // hardware sends is to see it in a log after someone presses it.
-                Log.i(TAG, "Unhandled key on the approval screen: keycode $keyCode")
-                super.onKeyDown(keyCode, event)
-            }
-        }
 
     /**
      * Buzzes the wrist directly rather than relying on the notification channel.
