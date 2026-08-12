@@ -6,6 +6,8 @@
 
     <!-- Bluetooth permissions come from :core, which is what actually needs them. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Required from API 34 to raise the approval screen without a tap. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
@@ -35,6 +37,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <activity
+                android:name=".WearApprovalActivity"
+                android:exported="false"
+                android:excludeFromRecents="true"
+                android:launchMode="singleTop"
+                android:showWhenLocked="true"
+                android:turnScreenOn="true"
+                android:taskAffinity=".approval"
+                android:theme="@android:style/Theme.DeviceDefault"/>
 
         <service
                 android:name=".WearEnrolmentReceiver"

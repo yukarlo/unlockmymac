@@ -13,6 +13,8 @@
     <string name="action_approve">Approve</string>
     <string name="action_deny">Deny</string>
 
+    <string name="approval_press_button">Press the side button to approve</string>
+
     <!-- Home -->
     <string name="home_service_switch">Discoverable</string>
     <string name="home_require_approval">Ask before unlocking</string>

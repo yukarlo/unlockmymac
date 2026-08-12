@@ -90,6 +90,9 @@ object WearNotifier : UnlockNotifier {
             // Nothing to bridge to and nothing worth bridging: the phone raises its own prompt
             // when it is the device being challenged.
             .setLocalOnly(true)
+            // Raises the approval screen itself instead of waiting to be scrolled to and tapped.
+            // A prompt with a 60s life is not much use sitting in a notification tray.
+            .setFullScreenIntent(approvalScreenIntent(context, challengeId, macName), true)
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
                 context.getString(R.string.action_deny),
@@ -104,6 +107,21 @@ object WearNotifier : UnlockNotifier {
     override fun cancelApproval(context: Context) {
         NotificationManagerCompat.from(context).cancel(approvalNotificationId)
     }
+
+    private fun approvalScreenIntent(
+        context: Context,
+        challengeId: Long,
+        macName: String?,
+    ): PendingIntent =
+        PendingIntent.getActivity(
+            context,
+            challengeId.toInt(),
+            Intent(context, WearApprovalActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                .putExtra(WearApprovalActivity.EXTRA_CHALLENGE_ID, challengeId)
+                .putExtra(WearApprovalActivity.EXTRA_MAC_NAME, macName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
     private fun openAppIntent(context: Context): PendingIntent =
         PendingIntent.getActivity(
