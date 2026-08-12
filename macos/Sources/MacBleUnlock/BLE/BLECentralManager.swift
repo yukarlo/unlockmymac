@@ -136,8 +136,38 @@ final class BLECentralManager: NSObject, ObservableObject {
         // Every entry predates the sleep, and Android has rotated its private address at least
         // once by now, so all of them are dead handles.
         discoveredPeripherals.removeAll()
+        reclaimSystemConnections()
         restartScanning()
         startStaleSweepTimer()
+    }
+
+    /// Tears down links that bluetoothd is holding but nobody is using.
+    ///
+    /// macOS can keep a connection to the phone after the peer has dropped it — observed as
+    /// `system_profiler` reporting the phone as Connected while the phone shows no LE ACL at
+    /// all. In that state `connect()` never completes and never fails: no `didConnect`, no
+    /// disconnect, just the watchdog firing forever. The app was wedged for eleven hours this
+    /// way, with zero challenges written.
+    ///
+    /// `retrieveConnectedPeripherals` is the only way to see links owned by the system rather
+    /// than by this process. Cancelling them puts the stack back into a state where a fresh
+    /// connect can succeed.
+    func reclaimSystemConnections() {
+        queue.async { [weak self] in
+            guard let self, self.centralManager.state == .poweredOn else { return }
+            let held = self.centralManager.retrieveConnectedPeripherals(
+                withServices: [BLEProtocol.serviceUUID]
+            )
+            guard !held.isEmpty else { return }
+            self.log.info("Reclaiming \(held.count) system-held connection(s)")
+            EventLogger.shared.info(
+                category: "BLE",
+                "Clearing \(held.count) stale Bluetooth connection(s) held by macOS"
+            )
+            for peripheral in held {
+                self.centralManager.cancelPeripheralConnection(peripheral)
+            }
+        }
     }
 
     /// Drops a peripheral known to be dead — a connect that exhausted its watchdog retries.
@@ -180,6 +210,9 @@ final class BLECentralManager: NSObject, ObservableObject {
     /// once `centralManagerDidUpdateState` reports `.poweredOn`.
     func start() {
         wantsScanning = true
+        // The system may still be holding a link from a previous session; clear it before
+        // scanning, or the first connect will hang against a dead one.
+        reclaimSystemConnections()
         startScanningIfReady()
         startStaleSweepTimer()
     }
@@ -310,6 +343,9 @@ extension BLECentralManager: CBCentralManagerDelegate {
         }
 
         if mapped == .poweredOn {
+            // Toggling Bluetooth is the manual cure for a wedged link; make sure the app also
+            // clears anything the stack carried across the power cycle.
+            reclaimSystemConnections()
             startScanningIfReady()
         } else {
             // The stack drops the scan when the adapter leaves poweredOn; forget the mode so

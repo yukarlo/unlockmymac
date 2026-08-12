@@ -199,8 +199,12 @@ final class GATTChallengeClient: NSObject {
                 self.log.info("Connect stalled after \(self.connectAttempt) attempts; giving up")
                 EventLogger.shared.warning(
                     category: "GATT",
-                    "Could not establish a connection (stale peripheral address)"
+                    "Could not establish a connection after \(self.connectAttempt) attempts"
                 )
+                // A connect that never completes and never fails is the signature of a link
+                // bluetoothd is holding on our behalf. Clear it so the next attempt is not
+                // fighting the same corpse — this is what kept the app wedged for 11 hours.
+                self.bleCentral.reclaimSystemConnections()
                 self.finish(.failure(.connectionFailed(nil)), for: peripheral, disconnect: true)
                 return
             }
