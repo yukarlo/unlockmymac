@@ -305,16 +305,50 @@ final class PresenceStateMachine: ObservableObject {
         // A refusal applies to the lock session it was given in, not the next one.
         lastFailureWasDenial = false
         lastHeartbeatAuthDate = nil
+        // `lastSuccessfulDeviceId` deliberately survives: whoever unlocked last session is still
+        // the best first guess next time. Only the in-flight rotation resets.
+        candidateRotation = 0
         transitionTo(.absent)
     }
+
+    /// The device that answered most recently, so the next challenge starts with the likeliest.
+    private var lastSuccessfulDeviceId: String?
+
+    /// How many paired devices have already refused during this acquisition.
+    private var candidateRotation = 0
 
     /// Which paired device the next challenge should name.
     ///
     /// The Mac cannot tell who it has connected to before it asks — addresses rotate and are never
     /// identity — so it addresses one device and accepts a rejection as "try the other". Whoever
     /// actually answers is established by which stored public key verifies the signature.
+    ///
+    /// Ordered so the device that answered last is tried first: a phone and a watch are seldom
+    /// both in range, and when they are, the same one tends to keep answering. That makes the
+    /// common case cost nothing and only an unusual one pay a wasted round trip.
     private func challengeTarget() -> PairedDevice? {
-        pairingManager.pairedDevices.first
+        var ordered = pairingManager.pairedDevices
+        guard !ordered.isEmpty else { return nil }
+        if let lastId = lastSuccessfulDeviceId,
+           let index = ordered.firstIndex(where: {
+               $0.deviceId.caseInsensitiveCompare(lastId) == .orderedSame
+           }) {
+            ordered.swapAt(0, index)
+        }
+        return ordered[candidateRotation % ordered.count]
+    }
+
+    /// Re-addresses the challenge to the next paired device after a refusal.
+    ///
+    /// Returns false once every device has refused, at which point the refusal is a genuine
+    /// anomaly — a replay, a clock skew, another central mid-session — and belongs in a backoff.
+    private func advanceToNextCandidate() -> Bool {
+        candidateRotation += 1
+        if candidateRotation < pairingManager.pairedDevices.count {
+            return true
+        }
+        candidateRotation = 0
+        return false
     }
 
     private func evaluatePresence() {
@@ -441,6 +475,10 @@ final class PresenceStateMachine: ObservableObject {
             case .success(let verified):
                 if verified {
                     self.authenticatedPeripheralId = peripheral.identifier
+                    // Only the addressed device will sign — every other paired device rejects a
+                    // challenge naming someone else — so a verified answer identifies the sender.
+                    self.lastSuccessfulDeviceId = paired.deviceId
+                    self.candidateRotation = 0
                     EventLogger.shared.success(category: "Auth", "Authenticated presence confirmed for '\(paired.name)'")
                     self.onAuthenticationSuccess()
                 } else {
@@ -455,6 +493,18 @@ final class PresenceStateMachine: ObservableObject {
                 // result. Resetting the state here is what caused the thrash loop — it made
                 // the state machine believe it was idle and immediately try again.
                 self.log.notice("Handshake already in progress; leaving the running one alone")
+
+            case .failure(.rejectedByPeer) where self.advanceToNextCandidate():
+                // Almost certainly the wrong device for this challenge. Re-address it to the next
+                // paired device immediately: no backoff, because nothing went wrong, and the
+                // device that refused never created a session or raised a prompt.
+                let next = self.challengeTarget()?.name ?? "another device"
+                EventLogger.shared.info(
+                    category: "Auth",
+                    "'\(paired.name)' refused the challenge; re-addressing it to \(next)"
+                )
+                self.transitionTo(.absent)
+                self.evaluatePresence()
 
             case .failure(let error):
                 // The watchdog already retried twice, so this handle is dead — drop it or the

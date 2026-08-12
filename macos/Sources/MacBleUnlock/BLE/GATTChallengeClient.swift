@@ -22,6 +22,14 @@ enum GATTChallengeError: Error, CustomStringConvertible {
     /// The user tapped Deny on the phone. A decision, not a fault — do not retry promptly.
     case deniedByUser
 
+    /// The peripheral refused the challenge with the deliberately opaque `0x81`.
+    ///
+    /// Opaque by design, so this covers several causes — replay, clock skew, another central
+    /// mid-session — but the expected one with several devices paired is simply that the challenge
+    /// named a different device. The caller answers by re-addressing it to the next candidate
+    /// rather than by backing off.
+    case rejectedByPeer
+
     /// The user explicitly refused. Warrants a long backoff, not a prompt retry.
     var isDenial: Bool {
         if case .deniedByUser = self { return true }
@@ -45,7 +53,9 @@ enum GATTChallengeError: Error, CustomStringConvertible {
         // `sessionAlreadyInProgress` is not a failure at all — the caller treats it as a no-op
         // before it reaches any backoff. `deniedByUser` is a deliberate decision and must not
         // get the short retry, or denying produces a fresh prompt seconds later.
-        case .sessionAlreadyInProgress, .deniedByUser,
+        // `rejectedByPeer` is handled before any backoff applies: the caller retries against the
+        // next paired device, and only a rejection from every one of them reaches a backoff.
+        case .sessionAlreadyInProgress, .deniedByUser, .rejectedByPeer,
              .randomBytesUnavailable, .invalidSignature, .missingPairingData:
             return false
         }
@@ -83,6 +93,8 @@ enum GATTChallengeError: Error, CustomStringConvertible {
             return "No paired Android device key available for verification"
         case .deniedByUser:
             return "Unlock denied on the phone"
+        case .rejectedByPeer:
+            return "The device refused the challenge"
         }
     }
 }
@@ -475,6 +487,15 @@ extension GATTChallengeClient: CBPeripheralDelegate {
                 log.notice("Phone reported the request was denied by the user (ATT 0x82)")
                 EventLogger.shared.warning(category: "Unlock", "You denied this unlock on your phone — the Mac will not ask again for 2 minutes")
                 finish(.failure(.deniedByUser), for: peripheral, disconnect: true)
+                return
+            }
+
+            // 0x81 (129) is the opaque catch-all refusal. With several devices paired the ordinary
+            // cause is that this challenge named a different one, so the caller re-addresses it
+            // instead of treating it as a link fault and retrying the same device forever.
+            if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 129 {
+                log.notice("Device refused the challenge (ATT 0x81)")
+                finish(.failure(.rejectedByPeer), for: peripheral, disconnect: true)
                 return
             }
 
