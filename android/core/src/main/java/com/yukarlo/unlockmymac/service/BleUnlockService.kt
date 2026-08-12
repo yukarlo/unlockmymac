@@ -13,13 +13,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.yukarlo.unlockmymac.AppContainer
-import com.yukarlo.unlockmymac.core.R
 import com.yukarlo.unlockmymac.ble.BleAdvertiser
 import com.yukarlo.unlockmymac.ble.GattContext
 import com.yukarlo.unlockmymac.ble.GattServerController
 import com.yukarlo.unlockmymac.ble.GattServerListener
 import com.yukarlo.unlockmymac.ble.PendingChallenge
 import com.yukarlo.unlockmymac.container
+import com.yukarlo.unlockmymac.core.R
 import com.yukarlo.unlockmymac.data.AdvertisingState
 import com.yukarlo.unlockmymac.data.AppSettings
 import com.yukarlo.unlockmymac.data.ApprovalRequest
@@ -88,6 +88,7 @@ class BleUnlockService :
                 sessions = appContainer.sessions,
                 signer = appContainer.signer,
                 pairingCoordinator = appContainer.pairingCoordinator,
+                enrolmentCoordinator = appContainer.enrolmentCoordinator,
                 status = appContainer.status,
                 eventLog = appContainer.eventLog,
                 contextProvider = ::gattContext,
@@ -161,7 +162,9 @@ class BleUnlockService :
                 if (id >= 0) gattServer.resolveApproval(id, approved)
             }
 
-            ACTION_FORCE_RESET -> forceReset()
+            ACTION_FORCE_RESET -> {
+                forceReset()
+            }
         }
         // START_STICKY: if the system kills us for memory, come back and resume advertising.
         return START_STICKY

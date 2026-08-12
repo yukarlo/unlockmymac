@@ -50,6 +50,9 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
 
+    // Receives the watch's public key so this phone can vouch for it with the Mac.
+    implementation(libs.play.services.wearable)
+
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)

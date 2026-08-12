@@ -15,6 +15,7 @@ import com.yukarlo.unlockmymac.crypto.KeystoreSigner
 import com.yukarlo.unlockmymac.data.AuthOutcome
 import com.yukarlo.unlockmymac.data.BleStatusRepository
 import com.yukarlo.unlockmymac.data.EventLog
+import com.yukarlo.unlockmymac.pairing.EnrolmentCoordinator
 import com.yukarlo.unlockmymac.pairing.PairingCoordinator
 import com.yukarlo.unlockmymac.permissions.BlePermissions
 import com.yukarlo.unlockmymac.util.challengeTag
@@ -76,6 +77,7 @@ class GattServerController(
     private val sessions: ChallengeSessions,
     private val signer: KeystoreSigner,
     private val pairingCoordinator: PairingCoordinator,
+    private val enrolmentCoordinator: EnrolmentCoordinator,
     private val status: BleStatusRepository,
     private val eventLog: EventLog,
     private val contextProvider: () -> GattContext,
@@ -126,6 +128,13 @@ class GattServerController(
                 BleUuids.PAIRING,
                 BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_READ,
                 BluetoothGattCharacteristic.PERMISSION_WRITE or BluetoothGattCharacteristic.PERMISSION_READ,
+            ),
+        )
+        service.addCharacteristic(
+            BluetoothGattCharacteristic(
+                BleUuids.ENROLMENT,
+                BluetoothGattCharacteristic.PROPERTY_READ,
+                BluetoothGattCharacteristic.PERMISSION_READ,
             ),
         )
 
@@ -261,6 +270,7 @@ class GattServerController(
                 when (characteristic.uuid) {
                     BleUuids.RESPONSE -> handleResponseRead(device, requestId, offset)
                     BleUuids.PAIRING -> handlePairingRead(device, requestId, offset)
+                    BleUuids.ENROLMENT -> handleEnrolmentRead(device, requestId, offset)
                     else -> respond(device, requestId, GattStatus.REJECTED, offset, true)
                 }
             }
@@ -437,6 +447,32 @@ class GattServerController(
                 listener.onPaired(invite.macInstallationId, invite.macName)
                 eventLog.info("Paired with ${invite.macName}")
             }
+        }
+    }
+
+    /**
+     * Serves the signed offer vouching for another device, if one is currently staged.
+     *
+     * Nothing here decides anything: this device already made its statement when it signed the
+     * offer, and the Mac is the one that checks the signature against a key it already trusts.
+     * The usual answer is [GattStatus.REJECTED], which simply means "nothing to enrol" — opaque
+     * like every other refusal, so a stranger reading this learns nothing about the device.
+     */
+    private fun handleEnrolmentRead(
+        device: BluetoothDevice,
+        requestId: Int,
+        offset: Int,
+    ) {
+        val offer = enrolmentCoordinator.current(System.currentTimeMillis())
+        if (offer == null) {
+            respond(device, requestId, GattStatus.REJECTED, offset, true)
+            return
+        }
+        val sent = respondWithBlob(device, requestId, offset, offer.offerBytes)
+        if (!sent) return
+
+        if (offset == 0) {
+            eventLog.info("Served an enrolment offer for '${offer.deviceName}'")
         }
     }
 

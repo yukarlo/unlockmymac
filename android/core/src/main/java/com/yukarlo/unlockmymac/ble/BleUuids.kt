@@ -18,6 +18,14 @@ object BleUuids {
 
     /** Mac writes a pairing token and reads back our identity here. WRITE + READ. */
     val PAIRING: UUID = UUID.fromString("f9a2b8e3-54cd-4e92-a123-765432198768")
+
+    /**
+     * Mac reads a signed offer vouching for another device here. READ.
+     *
+     * Empty almost always — it only holds anything in the minutes between a watch asking to be
+     * enrolled and the user opening "Add a device" on the Mac.
+     */
+    val ENROLMENT: UUID = UUID.fromString("f9a2b8e3-54cd-4e92-a123-765432198769")
 }
 
 /**

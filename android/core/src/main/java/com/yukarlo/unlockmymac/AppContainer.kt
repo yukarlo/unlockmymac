@@ -9,6 +9,7 @@ import com.yukarlo.unlockmymac.data.BleStatusRepository
 import com.yukarlo.unlockmymac.data.EventLog
 import com.yukarlo.unlockmymac.data.PairingRepository
 import com.yukarlo.unlockmymac.data.SettingsRepository
+import com.yukarlo.unlockmymac.pairing.EnrolmentCoordinator
 import com.yukarlo.unlockmymac.pairing.PairingCoordinator
 import com.yukarlo.unlockmymac.service.UnlockNotifier
 
@@ -29,6 +30,7 @@ class AppContainer(
     val eventLog = EventLog(appContext)
     val signer = KeystoreSigner()
     val pairingCoordinator = PairingCoordinator()
+    val enrolmentCoordinator = EnrolmentCoordinator()
 
     /** Session state lives here, not in the service, so it survives service restarts intact. */
     val sessions = ChallengeSessions(ElapsedClock { SystemClock.elapsedRealtime() })
