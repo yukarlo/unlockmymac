@@ -86,6 +86,9 @@ object ChallengeCodec {
     /** How far [ChallengeRequest.issuedAtMs] may drift from our own clock, either direction. */
     const val MAX_CLOCK_SKEW_MS = 120_000L
 
+    /** `deviceId` value meaning "whichever of your paired devices is listening". */
+    const val ANY_DEVICE = "*"
+
     private val KEYS = listOf("macInstallationId", "deviceId", "issuedAt", "challenge")
 
     fun parse(payload: ByteArray): ParseResult<ChallengeRequest> {
@@ -113,7 +116,8 @@ object ChallengeCodec {
         }
 
         val (macId, deviceId, issuedAtText, challengeText) = values
-        if (!isUuid(macId) || !isUuid(deviceId)) return ParseResult.Invalid(RejectReason.BAD_UUID)
+        if (!isUuid(macId)) return ParseResult.Invalid(RejectReason.BAD_UUID)
+        if (deviceId != ANY_DEVICE && !isUuid(deviceId)) return ParseResult.Invalid(RejectReason.BAD_UUID)
 
         val issuedAt = issuedAtText.toLongOrNull()
         if (issuedAt == null || issuedAt <= 0L) return ParseResult.Invalid(RejectReason.BAD_TIMESTAMP)
@@ -151,7 +155,20 @@ object ChallengeCodec {
         if (!request.macInstallationId.equalsIgnoreAsciiCase(pairedMacInstallationId)) {
             return RejectReason.UNKNOWN_MAC
         }
-        if (!request.deviceId.equalsIgnoreAsciiCase(ownDeviceId)) return RejectReason.WRONG_DEVICE
+        // A Mac with several devices paired cannot know which one it has connected to before
+        // it asks: addresses rotate and are never identity. Rather than guess and burn a round
+        // trip per wrong guess, it addresses the challenge to whoever answers and identifies the
+        // signer by which stored public key verifies the signature.
+        //
+        // Nothing is given away by accepting this. WRONG_DEVICE only ever stopped one device
+        // answering a challenge meant for another device paired to the same Mac, and the Mac is
+        // content with either. The challenge still names the Mac, still carries a fresh 32-byte
+        // nonce, and is still only answerable by a key the Mac already trusts.
+        if (request.deviceId != ANY_DEVICE &&
+            !request.deviceId.equalsIgnoreAsciiCase(ownDeviceId)
+        ) {
+            return RejectReason.WRONG_DEVICE
+        }
         if (kotlin.math.abs(nowMs - request.issuedAtMs) > maxSkewMs) return RejectReason.CLOCK_SKEW
         return null
     }
