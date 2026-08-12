@@ -125,6 +125,19 @@ class BleUnlockService :
             }
         }
 
+        // Expired challenges are otherwise only pruned when something else calls into
+        // ChallengeSessions. With a prompt sitting unanswered nothing does, so one survived
+        // overnight and was "approved" 10.5 hours later against a Mac that had long gone.
+        lifecycleScope.launch {
+            while (true) {
+                delay(SESSION_SWEEP_INTERVAL_MS)
+                if (appContainer.sessions.sweepExpired()) {
+                    appContainer.eventLog.info("Approval request expired; withdrawing the prompt")
+                    onApprovalNoLongerValid()
+                }
+            }
+        }
+
         lifecycleScope.launch {
             appContainer.pairing.pairedMac.collect { paired ->
                 pairedMacInstallationId = paired?.installationId
@@ -309,6 +322,9 @@ class BleUnlockService :
 
         /** Let the stack finish tearing down the connection before re-advertising. */
         private const val ADVERTISE_RESTART_DELAY_MS = 500L
+
+        /** How often to drop expired challenges and withdraw their prompts. */
+        private const val SESSION_SWEEP_INTERVAL_MS = 15_000L
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, BleUnlockService::class.java))

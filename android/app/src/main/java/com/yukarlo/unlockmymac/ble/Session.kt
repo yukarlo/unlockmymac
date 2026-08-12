@@ -118,6 +118,14 @@ class ChallengeSessions(
         synchronized(lock) {
             val pending = byConnection.values.firstOrNull { it.id == id } ?: return null
             if (pending.approval != ApprovalState.PENDING) return null
+            // An expired challenge can still be sitting here — nothing prunes it unless some
+            // other call happens to come in. Approving one silently "succeeds" against a
+            // challenge no central will ever read: observed with a prompt approved 10.5 hours
+            // after it was issued.
+            if (pending.isExpired(clock.elapsedMs())) {
+                byConnection.remove(pending.connectionKey, pending)
+                return null
+            }
             pending.approval = if (approved) ApprovalState.APPROVED else ApprovalState.DENIED
             return pending
         }
@@ -172,6 +180,26 @@ class ChallengeSessions(
         synchronized(lock) {
             byConnection.remove(connectionKey)
             Unit
+        }
+
+    /**
+     * Prunes expired challenges, reporting whether any of them was still awaiting approval.
+     *
+     * Nothing else calls into this class while a prompt sits unanswered, so without a periodic
+     * sweep an expired challenge — and its notification — can survive indefinitely.
+     *
+     * @return true if a pending-approval challenge was dropped, so the caller can withdraw the
+     *         notification.
+     */
+    fun sweepExpired(): Boolean =
+        synchronized(lock) {
+            val now = clock.elapsedMs()
+            val hadPendingApproval =
+                byConnection.values.any {
+                    it.isExpired(now) && it.approval == ApprovalState.PENDING
+                }
+            pruneExpired(now)
+            hadPendingApproval
         }
 
     fun clear() =

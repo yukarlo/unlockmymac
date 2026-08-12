@@ -182,6 +182,39 @@ class ChallengeSessionsTest {
     }
 
     @Test
+    fun `approving an expired challenge is refused`() {
+        sessions.offer("aa", request(1), ttlMs = 60_000, requiresApproval = true)
+        val pending = sessions.awaitingApproval().single()
+        clock.advance(60_000)
+
+        // Regression: a prompt left on screen overnight was approved 10.5 hours later and the
+        // approval "succeeded" against a challenge no central would ever read.
+        assertNull(sessions.setApproval(pending.id, approved = true))
+        assertNull(sessions.current("aa"))
+    }
+
+    @Test
+    fun `sweep drops expired challenges and reports a lost approval prompt`() {
+        sessions.offer("aa", request(1), ttlMs = 60_000, requiresApproval = true)
+        assertFalse(sessions.sweepExpired())
+
+        clock.advance(60_000)
+        assertTrue(sessions.sweepExpired())
+        assertNull(sessions.current("aa"))
+        // Nothing left to report on a second pass.
+        assertFalse(sessions.sweepExpired())
+    }
+
+    @Test
+    fun `sweep leaves a live challenge alone`() {
+        sessions.offer("aa", request(1), ttlMs = 60_000, requiresApproval = true)
+        clock.advance(30_000)
+
+        assertFalse(sessions.sweepExpired())
+        assertTrue(sessions.current("aa") != null)
+    }
+
+    @Test
     fun `approval is single shot`() {
         sessions.offer("aa", request(1), ttlMs = 60_000, requiresApproval = true)
         val pending = sessions.awaitingApproval().single()
