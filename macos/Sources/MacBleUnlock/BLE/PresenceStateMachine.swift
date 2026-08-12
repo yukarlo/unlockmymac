@@ -87,8 +87,12 @@ final class PresenceStateMachine: ObservableObject {
     private var lastFailureWasDenial = false
 
     /// Backoff after an explicit "no". Long on purpose: the user said no, and each retry raises
-    /// a fresh notification on their phone. Cleared when the screen locks again, so the next
-    /// lock session starts fresh rather than inheriting the refusal.
+    /// a fresh notification on their phone.
+    ///
+    /// A successful unlock is the only thing that clears it, so the next lock session starts
+    /// fresh rather than inheriting the refusal. Deliberately *not* cleared by a display wake or
+    /// a system wake: those are reachable by anyone standing at the Mac, and clearing there would
+    /// turn "no" into "no until you shut the lid and open it again".
     private let deniedBackoffSeconds: TimeInterval = 120
 
     private var currentBackoffSeconds: TimeInterval {
@@ -179,9 +183,16 @@ final class PresenceStateMachine: ObservableObject {
             if self.gattClient.isBusy { self.gattClient.cancel() }
             // Only relevant while locked — that is the only time the radio is up.
             guard self.systemActionController.isScreenLocked else { return }
-            self.lastAuthFailureDate = nil
-            self.lastFailureWasTransport = false
-            self.lastFailureWasDenial = false
+            // Same rule as the display-wake path: a stall from before the sleep is stale and
+            // should not delay the user, but a refusal is a decision and keeps its full backoff.
+            // Clearing it here made the two minutes bypassable by shutting the lid and opening
+            // it again, which is the one thing the backoff exists to stop. Nothing needs
+            // clearing for correctness — `lastAuthFailureDate` is wall-clock, so time spent
+            // asleep already counts toward the backoff and a long sleep expires it naturally.
+            if !self.lastFailureWasDenial {
+                self.lastAuthFailureDate = nil
+                self.lastFailureWasTransport = false
+            }
             self.authenticatedPeripheralId = nil
             if self.currentState != .absent {
                 self.transitionTo(.absent)
