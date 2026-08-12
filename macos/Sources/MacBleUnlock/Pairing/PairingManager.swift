@@ -1,12 +1,84 @@
 import Foundation
 import Combine
 
+/// Maps Android hardware model codes to human-readable device names.
+struct DeviceModelMapper {
+    static func friendlyName(for rawName: String) -> String {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let upper = trimmed.uppercased()
+
+        // Samsung Galaxy Watch Models
+        if upper.contains("SM-R930") || upper.contains("SM-R935") { return "Galaxy Watch 6 (40mm)" }
+        if upper.contains("SM-R940") || upper.contains("SM-R945") { return "Galaxy Watch 6 (44mm)" }
+        if upper.contains("SM-R950") || upper.contains("SM-R955") { return "Galaxy Watch 6 Classic (43mm)" }
+        if upper.contains("SM-R960") || upper.contains("SM-R965") { return "Galaxy Watch 6 Classic (47mm)" }
+        if upper.hasPrefix("SM-R93") || upper.hasPrefix("SM-R94") || upper.hasPrefix("SM-R95") || upper.hasPrefix("SM-R96") { return "Galaxy Watch 6" }
+        
+        if upper.contains("SM-R860") || upper.contains("SM-R865") || upper.contains("SM-R870") || upper.contains("SM-R875") { return "Galaxy Watch 4" }
+        if upper.contains("SM-R880") || upper.contains("SM-R885") || upper.contains("SM-R890") || upper.contains("SM-R895") { return "Galaxy Watch 4 Classic" }
+        if upper.contains("SM-R900") || upper.contains("SM-R905") || upper.contains("SM-R910") || upper.contains("SM-R915") || upper.contains("SM-R920") || upper.contains("SM-R925") { return "Galaxy Watch 5 / 5 Pro" }
+        if upper.contains("SM-L300") || upper.contains("SM-L305") || upper.contains("SM-L310") || upper.contains("SM-L315") || upper.contains("SM-L700") || upper.contains("SM-L705") { return "Galaxy Watch 7 / Ultra" }
+        if upper.hasPrefix("SM-R") || upper.hasPrefix("SM-L") { return "Galaxy Watch" }
+
+        // Samsung Galaxy Z Fold Series (SM-F9...)
+        if upper.contains("SM-F976") { return "Galaxy Z Fold 8" }
+        if upper.contains("SM-F966") { return "Galaxy Z Fold 7" }
+        if upper.contains("SM-F956") { return "Galaxy Z Fold 6" }
+        if upper.contains("SM-F946") { return "Galaxy Z Fold 5" }
+        if upper.contains("SM-F936") { return "Galaxy Z Fold 4" }
+        if upper.contains("SM-F926") { return "Galaxy Z Fold 3" }
+        if upper.contains("SM-F916") { return "Galaxy Z Fold 2" }
+        if upper.contains("SM-F900") { return "Galaxy Fold" }
+        if upper.hasPrefix("SM-F9") { return "Galaxy Z Fold" }
+
+        // Samsung Galaxy Z Flip Series (SM-F7...)
+        if upper.contains("SM-F741") { return "Galaxy Z Flip 6" }
+        if upper.contains("SM-F731") { return "Galaxy Z Flip 5" }
+        if upper.contains("SM-F721") { return "Galaxy Z Flip 4" }
+        if upper.contains("SM-F711") { return "Galaxy Z Flip 3" }
+        if upper.contains("SM-F700") { return "Galaxy Z Flip" }
+        if upper.hasPrefix("SM-F7") { return "Galaxy Z Flip" }
+
+        // Samsung Galaxy S Series (SM-S9...)
+        if upper.contains("SM-S928") { return "Galaxy S24 Ultra" }
+        if upper.contains("SM-S926") { return "Galaxy S24+" }
+        if upper.contains("SM-S921") { return "Galaxy S24" }
+        if upper.contains("SM-S918") { return "Galaxy S23 Ultra" }
+        if upper.contains("SM-S916") { return "Galaxy S23+" }
+        if upper.contains("SM-S911") { return "Galaxy S23" }
+        if upper.contains("SM-S908") { return "Galaxy S22 Ultra" }
+        if upper.contains("SM-S906") { return "Galaxy S22+" }
+        if upper.contains("SM-S901") { return "Galaxy S22" }
+        if upper.hasPrefix("SM-S") { return "Galaxy S Series" }
+
+        // Samsung Galaxy A Series (SM-A...)
+        if upper.contains("SM-A566") || upper.contains("SM-A56") { return "Galaxy A56 5G" }
+        if upper.contains("SM-A556") { return "Galaxy A55 5G" }
+        if upper.contains("SM-A546") { return "Galaxy A54 5G" }
+        if upper.contains("SM-A536") { return "Galaxy A53 5G" }
+        if upper.hasPrefix("SM-A") { return "Galaxy A Series" }
+
+        // Pixel Devices
+        if upper.contains("PIXEL WATCH") { return "Pixel Watch" }
+        if upper.contains("PIXEL 9") { return "Pixel 9" }
+        if upper.contains("PIXEL 8") { return "Pixel 8" }
+        if upper.contains("PIXEL 7") { return "Pixel 7" }
+        if upper.contains("PIXEL") { return "Google Pixel" }
+
+        return trimmed
+    }
+}
+
 /// Paired Android device identity and cryptographic public key.
 struct PairedDevice: Codable, Equatable {
     let deviceId: String
     let name: String
     let publicKeyDER: Data
     let pairedAt: Date
+
+    var displayName: String {
+        DeviceModelMapper.friendlyName(for: name)
+    }
 }
 
 /// Pairing session token representation for QR code exchange.

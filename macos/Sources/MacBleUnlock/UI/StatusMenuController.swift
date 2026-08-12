@@ -99,8 +99,11 @@ final class StatusMenuController: NSObject {
                         return true
                     }
                     if entry.name.caseInsensitiveCompare(device.name) == .orderedSame ||
+                        entry.name.caseInsensitiveCompare(device.displayName) == .orderedSame ||
                         entry.name.localizedCaseInsensitiveContains(device.name) ||
-                        device.name.localizedCaseInsensitiveContains(entry.name) {
+                        device.name.localizedCaseInsensitiveContains(entry.name) ||
+                        entry.name.localizedCaseInsensitiveContains(device.displayName) ||
+                        device.displayName.localizedCaseInsensitiveContains(entry.name) {
                         return true
                     }
                     return false
@@ -109,9 +112,9 @@ final class StatusMenuController: NSObject {
                 if let entry = matchingEntry, let rssi = entry.averageRSSI {
                     let rssiText = String(format: "%.0f dBm", rssi)
                     let nearSuffix = entry.isNear ? " (near)" : " (far)"
-                    menu.addItem(disabledItem(title: "  \(device.name): \(rssiText)\(nearSuffix)"))
+                    menu.addItem(disabledItem(title: "  \(device.displayName): \(rssiText)\(nearSuffix)"))
                 } else {
-                    menu.addItem(disabledItem(title: "  \(device.name): Out of range"))
+                    menu.addItem(disabledItem(title: "  \(device.displayName): Out of range"))
                 }
             }
         } else {
