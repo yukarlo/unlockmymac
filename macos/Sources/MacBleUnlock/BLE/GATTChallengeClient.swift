@@ -109,6 +109,9 @@ final class GATTChallengeClient: NSObject {
     private var timeoutWorkItem: DispatchWorkItem?
     private var isApprovalPending = false
 
+    /// When the phone first answered "waiting on the user", used to pace the re-reads.
+    private var approvalPendingSince: Date?
+
     /// Fires if `didConnect` never arrives. See `armConnectWatchdog`.
     private var connectWatchdog: DispatchWorkItem?
     private var connectAttempt = 0
@@ -130,6 +133,15 @@ final class GATTChallengeClient: NSObject {
 
     /// Brief pause after cancelling a hung connect so the stack can clear it.
     private static let connectRetryDelaySeconds: TimeInterval = 0.3
+
+    /// How long after the prompt appears to keep polling quickly for the user's answer.
+    private static let approvalFastPollWindow: TimeInterval = 12
+
+    /// Re-read cadence while the user is likely to be reaching for the phone.
+    private static let approvalFastPollInterval: TimeInterval = 0.25
+
+    /// Re-read cadence once a prompt looks like it has been left unanswered.
+    private static let approvalSlowPollInterval: TimeInterval = 1.5
 
     init(bleCentral: BLECentralManager, pairingManager: PairingManager) {
         self.bleCentral = bleCentral
@@ -250,6 +262,24 @@ final class GATTChallengeClient: NSObject {
         scheduleTimeout(duration: 60)
     }
 
+    /// How long to wait before asking the phone again whether the user has decided.
+    ///
+    /// The phone cannot volunteer the answer — the response characteristic is read-only, so the
+    /// Mac only learns of an approval on its next poll, and that poll interval is added directly
+    /// to the delay the user feels after tapping Approve. Polling quickly at first collapses
+    /// that; nearly every approval lands within a few seconds of the prompt appearing.
+    ///
+    /// The slow tail matters because the approval window is a full minute: a prompt left
+    /// unanswered on the lock screen would otherwise cost 240 pointless round trips, each one
+    /// waking the phone's GATT server for an answer that is not ready.
+    private func approvalReadDelay() -> TimeInterval {
+        guard let since = approvalPendingSince,
+              Date().timeIntervalSince(since) < Self.approvalFastPollWindow else {
+            return Self.approvalSlowPollInterval
+        }
+        return Self.approvalFastPollInterval
+    }
+
     private func finish(
         _ result: Result<Bool, GATTChallengeError>,
         for peripheral: CBPeripheral,
@@ -270,6 +300,7 @@ final class GATTChallengeClient: NSObject {
         responseCharacteristic = nil
         activeRequestPayload = nil
         isApprovalPending = false
+        approvalPendingSince = nil
         completion = nil
         peripheral.delegate = nil
 
@@ -391,10 +422,11 @@ extension GATTChallengeClient: CBPeripheralDelegate {
                 // Arm 60s approval timeout once when approval pending is first encountered
                 if !isApprovalPending {
                     isApprovalPending = true
+                    approvalPendingSince = Date()
                     extendTimeoutForUserApproval()
                 }
 
-                bleCentral.queue.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                bleCentral.queue.asyncAfter(deadline: .now() + approvalReadDelay()) { [weak self] in
                     guard let self, self.activePeripheral === peripheral else { return }
                     peripheral.readValue(for: characteristic)
                 }

@@ -328,6 +328,10 @@ final class AutoUnlockController: ObservableObject {
 
         EventLogger.shared.info(category: "AutoUnlock", "Executing auto-unlock keystroke sequence")
 
+        // Read on the main thread, where it is written. The keystroke sequence runs on a
+        // background queue, and reaching back into the controller from there would be a race.
+        let displayAwakeSince = systemActionController?.displayAwakeSince
+
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self else { return }
 
@@ -340,7 +344,7 @@ final class AutoUnlockController: ObservableObject {
             // A sleeping display takes 0.5-2s to light up and present a ready password field.
             // Typing 80ms after the wake keystroke sends the password into nothing — which is
             // exactly what happens when the Mac locks and the screen then times off.
-            guard self.waitForDisplayAwake() else {
+            guard self.waitForDisplayAwake(awakeSince: displayAwakeSince) else {
                 // Do NOT consume the attempt: nothing was typed, so a retry is not a repeated
                 // password guess. Clearing lastAttemptDate lets the next heartbeat try again.
                 EventLogger.shared.warning(
@@ -422,17 +426,30 @@ final class AutoUnlockController: ObservableObject {
     /// Called off the main thread from the keystroke sequence. Returns false if the display
     /// never woke, in which case the caller must not type — the login window is not ready and
     /// the keystrokes would be discarded.
-    private func waitForDisplayAwake() -> Bool {
+    private func waitForDisplayAwake(awakeSince: Date?) -> Bool {
         let deadline = Date().addingTimeInterval(Self.displayWakeTimeout)
         while Date() < deadline {
             if CGDisplayIsAsleep(CGMainDisplayID()) == 0 {
-                // Awake, but the login window still needs a moment to accept input.
-                usleep(Self.displaySettleMicros)
+                settleAfterDisplayWake(awakeSince: awakeSince)
                 return true
             }
             usleep(100_000)
         }
         return CGDisplayIsAsleep(CGMainDisplayID()) == 0
+    }
+
+    /// Waits out whatever is left of the login window's settle time.
+    ///
+    /// The full settle is only owed when the display woke moments ago. Since the handshake is
+    /// now gated on a lock screen already being on display, the display has typically been awake
+    /// for several seconds by the time we type — the connect, discovery and approval round trips
+    /// all happen first — and the wait is pure latency the user feels after tapping Approve.
+    private func settleAfterDisplayWake(awakeSince: Date?) {
+        let settle = TimeInterval(Self.displaySettleMicros) / 1_000_000
+        let elapsed = awakeSince.map { Date().timeIntervalSince($0) } ?? 0
+        let remaining = settle - elapsed
+        guard remaining > 0 else { return }
+        usleep(UInt32(remaining * 1_000_000))
     }
 
     private func postPassword(_ string: String) {

@@ -15,6 +15,14 @@ final class SystemActionController: ObservableObject {
     /// roughly every minute for as long as the Mac stays locked and the phone stays in range.
     @Published private(set) var isDisplayAsleep: Bool = false
 
+    /// When the display last woke, or nil while it is asleep.
+    ///
+    /// Lets the unlock sequence skip a settle it has already waited out. `CGDisplayIsAsleep`
+    /// only answers "is it awake now", and "awake for the last four seconds" is a materially
+    /// different state from "awake as of this instant" when deciding whether the login window
+    /// is ready to accept keystrokes.
+    private(set) var displayAwakeSince: Date?
+
     private var notificationTokens: [NSObjectProtocol] = []
 
     private var workspaceTokens: [NSObjectProtocol] = []
@@ -23,6 +31,10 @@ final class SystemActionController: ObservableObject {
 
     init() {
         updateScreenLockState()
+        // Seeded before the first poll: `setDisplayAsleep` only records a wake on a transition,
+        // and launching with the display already on is not one. Without this a relaunch would
+        // look like "never woke" and pay the full settle on its first unlock.
+        displayAwakeSince = CGDisplayIsAsleep(CGMainDisplayID()) == 0 ? Date() : nil
         updateDisplaySleepState()
         observeScreenLockNotifications()
         observeDisplaySleepNotifications()
@@ -124,6 +136,7 @@ final class SystemActionController: ObservableObject {
             // Only assign on a real change: subscribers treat each emission as a fresh edge, and
             // a repeated "awake" would re-trigger the handshake on every poll.
             self.isDisplayAsleep = asleep
+            self.displayAwakeSince = asleep ? nil : Date()
             EventLogger.shared.info(
                 category: "System",
                 "Display \(asleep ? "asleep" : "awake") (\(source))"
