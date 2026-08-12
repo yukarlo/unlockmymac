@@ -93,6 +93,13 @@ struct PairingView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.red)
+
+                    if let statusMessage {
+                        Text(statusMessage)
+                            .font(.caption)
+                            .foregroundColor(isError ? .red : .secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
                 }
                 .padding()
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color(NSColor.controlBackgroundColor)))
@@ -194,29 +201,46 @@ struct PairingView: View {
     /// one is tried. Nothing is trusted because of which peripheral answered.
     private func addVouchedDevice() {
         guard !isEnrolmentInFlight else { return }
-        let candidates = bleCentral.discoveredPeripherals.values.map(\.peripheral)
-        guard let target = candidates.first else {
-            statusMessage = "No paired device is in range"
-            isError = true
-            return
-        }
-
         isEnrolmentInFlight = true
-        statusMessage = "Asking \(target.name ?? "your device") if it is vouching for anything…"
         isError = false
+        statusMessage = "Looking for a paired device…"
 
-        gattEnrolmentClient.readOffer(from: target) { result in
-            isEnrolmentInFlight = false
-            switch result {
-            case .success(let device):
-                statusMessage = "Added \(device.name)"
-                isError = false
-            case .failure(let error):
-                statusMessage = error.description
+        // Scanning normally runs only while the Mac is locked, so by the time the user is sitting
+        // here clicking, nothing has been discovered and the radio is off. Bring it up for this
+        // one operation and put it back afterwards.
+        bleCentral.start()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.enrolmentScanSeconds) {
+            let candidates = bleCentral.discoveredPeripherals.values
+                .sorted { ($0.averageRSSI ?? -200) > ($1.averageRSSI ?? -200) }
+                .map(\.peripheral)
+
+            guard let target = candidates.first else {
+                isEnrolmentInFlight = false
+                bleCentral.stop()
+                statusMessage = "No paired device is in range"
                 isError = true
+                return
+            }
+
+            statusMessage = "Asking \(target.name ?? "your device") if it is vouching for anything…"
+            gattEnrolmentClient.readOffer(from: target) { result in
+                isEnrolmentInFlight = false
+                bleCentral.stop()
+                switch result {
+                case .success(let device):
+                    statusMessage = "Added \(device.name)"
+                    isError = false
+                case .failure(let error):
+                    statusMessage = error.description
+                    isError = true
+                }
             }
         }
     }
+
+    /// Long enough for a phone advertising once a second in low-power mode to be heard.
+    private static let enrolmentScanSeconds: TimeInterval = 3
 
     private func attemptAutoBlePairing(peripherals: [UUID: DiscoveredPeripheral]) {
         guard !isBlePairingInFlight,
