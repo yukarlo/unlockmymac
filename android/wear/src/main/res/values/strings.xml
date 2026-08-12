@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">Mac unlock</string>
+
+    <!-- Notifications -->
+    <string name="channel_ongoing">Broadcasting</string>
+    <string name="channel_ongoing_desc">Shown while the watch is discoverable by your Mac.</string>
+    <string name="channel_approval">Unlock approvals</string>
+    <string name="channel_approval_desc">Asks you to approve each unlock request.</string>
+    <string name="notification_ongoing_title">Mac unlock</string>
+    <string name="notification_approval_title">Unlock Request</string>
+    <string name="notification_approval_title_mac">Unlock %1$s?</string>
+    <string name="notification_approval_text">Approve to unlock this Mac.</string>
+    <string name="action_approve">Approve</string>
+    <string name="action_deny">Deny</string>
+
+    <!-- Home -->
+    <string name="home_service_switch">Discoverable</string>
+    <string name="home_not_paired">Not paired</string>
+    <string name="home_paired">Paired with %1$s</string>
+    <string name="home_permission_needed">Nearby devices permission is needed to broadcast.</string>
+    <string name="home_grant">Grant</string>
+    <string name="home_bluetooth_off">Bluetooth is off.</string>
+    <string name="home_enrol_hint">Open Mac unlock on your phone to authorise this watch.</string>
+    <string name="home_enrol_offer_sent">Key sent to your phone.</string>
+    <string name="home_enrol_send">Send key to phone</string>
+</resources>
