@@ -133,7 +133,10 @@ struct PairingView: View {
                                 .resizable()
                                 .interpolation(.none)
                                 .scaledToFit()
-                                .frame(width: 180, height: 180)
+                                // A QR that scales with the window beats one cropped by it; below
+                                // about 140pt a phone camera starts struggling, so hold that floor.
+                                .frame(minWidth: 140, idealWidth: 180, maxWidth: 240,
+                                       minHeight: 140, idealHeight: 180, maxHeight: 240)
                                 .frame(maxWidth: .infinity)
                                 .padding()
                                 .background(Color.white)
@@ -202,7 +205,7 @@ struct PairingView: View {
             }
         }
         .padding()
-        .frame(width: 420, height: 520)
+        .frame(minWidth: 420, idealWidth: 460, minHeight: 420, idealHeight: 560)
         .onAppear {
             // Scanning normally runs only while the Mac is locked, which it never is while this
             // window is in front of you — so without this nothing is ever discovered and both
@@ -325,11 +328,14 @@ final class PairingWindowController: NSWindowController {
         let hostingView = NSHostingView(rootView: PairingView(pairingManager: pairingManager, bleCentral: bleCentral))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
-            styleMask: [.titled, .closable],
+            // Resizable because the content is not a fixed height: with devices paired the list
+            // grows a row each time, and the QR section can appear below it.
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Pair Android Device"
+        window.contentMinSize = NSSize(width: 420, height: 420)
         window.contentView = hostingView
         window.center()
         self.init(window: window)
