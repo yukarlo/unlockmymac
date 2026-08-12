@@ -70,13 +70,14 @@ object ApprovalMirror {
         challengeId: Long,
         macName: String?,
     ) {
+        val appContext = context.applicationContext
         val payload =
             JSONObject()
                 .put("v", 1)
                 .put("challengeId", challengeId)
                 .put("macName", macName ?: "")
                 .toString()
-        send(context, PATH_REQUEST, payload)
+        send(appContext, PATH_REQUEST, payload)
     }
 
     /** Tells them the question has been answered, so their copy can disappear. */
@@ -84,7 +85,11 @@ object ApprovalMirror {
         context: Context,
         challengeId: Long,
     ) {
-        send(context, PATH_DISMISS, JSONObject().put("v", 1).put("challengeId", challengeId).toString())
+        send(
+            context.applicationContext,
+            PATH_DISMISS,
+            JSONObject().put("v", 1).put("challengeId", challengeId).toString(),
+        )
     }
 
     /** Sends this device's answer back to the device actually holding the challenge. */
@@ -100,15 +105,19 @@ object ApprovalMirror {
                 .put("challengeId", challengeId)
                 .put("approved", approved)
                 .toString()
+        // Application context, not the caller's: `WearApprovalActivity` sends its answer and
+        // finishes in the same breath, so anything else would strand a dead Activity on this
+        // executor until the Data Layer call returned.
+        val appContext = context.applicationContext
         io.execute {
             runCatching {
                 Tasks.await(
                     Wearable
-                        .getMessageClient(context)
+                        .getMessageClient(appContext)
                         .sendMessage(nodeId, PATH_DECISION, payload.toByteArray(Charsets.UTF_8)),
                 )
             }.onFailure {
-                context.container.eventLog.warn("Could not send the approval decision: ${it.message}")
+                appContext.container.eventLog.warn("Could not send the approval decision: ${it.message}")
             }
         }
     }

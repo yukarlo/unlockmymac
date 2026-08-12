@@ -164,6 +164,9 @@ class BleUnlockService :
                 val id = intent.getLongExtra(EXTRA_CHALLENGE_ID, -1L)
                 val approved = intent.getBooleanExtra(EXTRA_APPROVED, false)
                 if (id >= 0) {
+                    // Cleared before resolving: resolving invokes onApprovalNoLongerValid, which
+                    // would otherwise broadcast its own dismiss and double every message.
+                    promptedChallengeId = null
                     gattServer.resolveApproval(id, approved)
                     // The question has been answered; every copy of it is now stale. Without
                     // this only the device that was tapped cleared its prompt, leaving the
@@ -173,7 +176,6 @@ class BleUnlockService :
                     // notification does nothing to an Activity already on screen.
                     appContainer.status.setPendingApproval(null)
                     ApprovalMirror.broadcastDismiss(this, id)
-                    promptedChallengeId = null
                 }
             }
 
