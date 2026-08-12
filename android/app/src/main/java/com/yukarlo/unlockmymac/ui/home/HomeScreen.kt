@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -340,6 +341,17 @@ fun HomeScreen(
                 StatusRow(
                     label = stringResource(R.string.home_status_connected),
                     value = if (state.status.connectedCentrals > 0) "${state.status.connectedCentrals} Connected" else "None",
+                )
+                val smartwatchText =
+                    if (state.connectedSmartwatches.isNotEmpty()) {
+                        state.connectedSmartwatches.joinToString(", ")
+                    } else {
+                        stringResource(R.string.home_no_smartwatch)
+                    }
+                StatusRow(
+                    label = stringResource(R.string.home_status_smartwatch),
+                    value = smartwatchText,
+                    icon = Icons.Default.Watch,
                 )
                 StatusRow(
                     label = stringResource(R.string.home_status_last_challenge),

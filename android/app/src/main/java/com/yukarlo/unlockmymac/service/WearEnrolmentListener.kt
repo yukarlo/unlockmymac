@@ -1,6 +1,8 @@
 package com.yukarlo.unlockmymac.service
 
+import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import com.yukarlo.unlockmymac.ble.EnrolmentCodec
 import com.yukarlo.unlockmymac.container
@@ -97,10 +99,43 @@ class WearEnrolmentListener : WearableListenerService() {
         container.eventLog.info(
             "Vouched for '$watchName'; open Add a device on ${paired.name} within 5 minutes",
         )
+
+        // Tell the watch which Mac to trust. Enrolment is otherwise one-directional: the Mac
+        // would learn the watch's key while the watch still had no paired Mac, so it refused
+        // every challenge with NOT_PAIRED and could never actually unlock anything.
+        replyWithMacIdentity(
+            nodeId = messageEvent.sourceNodeId,
+            macInstallationId = paired.installationId,
+            macName = paired.name,
+        )
+    }
+
+    private fun replyWithMacIdentity(
+        nodeId: String,
+        macInstallationId: String,
+        macName: String,
+    ) {
+        val payload =
+            JSONObject()
+                .put("v", 1)
+                .put("macInstallationId", macInstallationId)
+                .put("macName", macName)
+                .toString()
+                .toByteArray(Charsets.UTF_8)
+        runCatching {
+            Tasks.await(
+                Wearable.getMessageClient(this).sendMessage(nodeId, PATH_ENROL_ACK, payload),
+            )
+        }.onFailure {
+            container.eventLog.warn("Could not tell the watch which Mac to trust: ${it.message}")
+        }
     }
 
     private companion object {
         /** Must match `WearEnrolmentSender.PATH_ENROL_REQUEST` in the wear module. */
         const val PATH_ENROL_REQUEST = "/unlockmymac/enrol-request"
+
+        /** Must match `WearEnrolmentReceiver.PATH_ENROL_ACK` in the wear module. */
+        const val PATH_ENROL_ACK = "/unlockmymac/enrol-ack"
     }
 }

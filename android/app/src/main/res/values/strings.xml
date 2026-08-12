@@ -28,9 +28,11 @@
     <string name="home_status_advertising">Broadcasting</string>
     <string name="home_status_paired">Paired Mac</string>
     <string name="home_status_connected">Connected Mac</string>
+    <string name="home_status_smartwatch">Smartwatch</string>
     <string name="home_status_last_challenge">Last request</string>
     <string name="home_status_last_auth">Last result</string>
     <string name="home_not_paired">Not paired</string>
+    <string name="home_no_smartwatch">None</string>
     <string name="home_never">Never</string>
     <string name="home_pair_button">Pair with a Mac</string>
     <string name="home_repair_button">Pair with a different Mac</string>

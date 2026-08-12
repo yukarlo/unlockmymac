@@ -27,7 +27,11 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import com.google.android.gms.tasks.Tasks
+import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class HomeUiState(
     val settings: AppSettings?,
@@ -37,6 +41,7 @@ class HomeUiState(
     val bluetoothOn: Boolean,
     /** False means an OEM battery manager may kill the service without warning. */
     val batteryExempt: Boolean,
+    val connectedSmartwatches: List<String> = emptyList(),
 )
 
 class HomeViewModel(
@@ -48,11 +53,12 @@ class HomeViewModel(
     private val permissionGranted = MutableStateFlow(BlePermissions.hasBleAccess(application))
     private val bluetoothOn = MutableStateFlow(isBluetoothOn())
     private val batteryExempt = MutableStateFlow(BatteryOptimization.isExempt(application))
+    private val connectedSmartwatches = MutableStateFlow<List<String>>(emptyList())
 
     /** Device-level signals, folded together because `combine` only types up to five flows. */
     private val environment =
-        combine(permissionGranted, bluetoothOn, batteryExempt) { granted, btOn, exempt ->
-            Environment(granted, btOn, exempt)
+        combine(permissionGranted, bluetoothOn, batteryExempt, connectedSmartwatches) { granted, btOn, exempt, watches ->
+            Environment(granted, btOn, exempt, watches)
         }
 
     val uiState: StateFlow<HomeUiState> =
@@ -62,7 +68,15 @@ class HomeViewModel(
             container.pairing.pairedMac,
             environment,
         ) { settings, status, paired, env ->
-            HomeUiState(settings, status, paired, env.hasBlePermission, env.bluetoothOn, env.batteryExempt)
+            HomeUiState(
+                settings = settings,
+                status = status,
+                pairedMac = paired,
+                hasBlePermission = env.hasBlePermission,
+                bluetoothOn = env.bluetoothOn,
+                batteryExempt = env.batteryExempt,
+                connectedSmartwatches = env.connectedSmartwatches,
+            )
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -74,6 +88,7 @@ class HomeViewModel(
                     hasBlePermission = permissionGranted.value,
                     bluetoothOn = bluetoothOn.value,
                     batteryExempt = batteryExempt.value,
+                    connectedSmartwatches = emptyList(),
                 ),
         )
 
@@ -81,6 +96,7 @@ class HomeViewModel(
         val hasBlePermission: Boolean,
         val bluetoothOn: Boolean,
         val batteryExempt: Boolean,
+        val connectedSmartwatches: List<String>,
     )
 
     private val _permissionDenied = MutableStateFlow(false)
@@ -91,8 +107,19 @@ class HomeViewModel(
         permissionGranted.value = BlePermissions.hasBleAccess(app)
         bluetoothOn.value = isBluetoothOn()
         batteryExempt.value = BatteryOptimization.isExempt(app)
+        viewModelScope.launch {
+            connectedSmartwatches.value = fetchSmartwatches()
+        }
         reconcileServiceState()
     }
+
+    private suspend fun fetchSmartwatches(): List<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val nodes = Tasks.await(Wearable.getNodeClient(app).connectedNodes)
+                nodes.map { it.displayName }
+            }.getOrDefault(emptyList())
+        }
 
     /** Opens the system Doze-exemption prompt. Only the user can actually grant it. */
     fun requestBatteryExemption() {
