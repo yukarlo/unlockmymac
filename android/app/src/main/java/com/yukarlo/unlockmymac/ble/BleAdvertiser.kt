@@ -83,13 +83,18 @@ class BleAdvertiser(
                         AdvertiseMode.BALANCED -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
                     },
                 ).setTxPowerLevel(
+                    // Always HIGH (+1 dBm), deliberately not tied to the mode above.
+                    //
                     // ADVERTISE_TX_POWER_LOW is -15 dBm, which put a phone on the same desk at
-                    // -85 dBm — too weak for the Mac to hold a GATT connection. MEDIUM is -7 dBm
-                    // and HIGH is +1 dBm; the advertising-mode setting doubles as a range lever.
-                    when (mode) {
-                        AdvertiseMode.LOW_POWER -> AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM
-                        AdvertiseMode.BALANCED -> AdvertiseSettings.ADVERTISE_TX_POWER_HIGH
-                    },
+                    // -85 dBm — too weak for the Mac to hold a GATT connection. MEDIUM is -7 dBm.
+                    //
+                    // Power used to follow the advertising mode, which quietly made the battery
+                    // toggle an 8 dB range lever: with it off, a phone that normally reads -60 dBm
+                    // came in at -74 dBm, both connect attempts stalled, and the unlock took an
+                    // extra nine seconds. Nothing was gained by that — battery cost is dominated
+                    // by how often the radio transmits, and the mode above already cuts that
+                    // roughly fourfold by advertising every second instead of every 250 ms.
+                    AdvertiseSettings.ADVERTISE_TX_POWER_HIGH,
                 ).setConnectable(true)
                 .setTimeout(0)
                 .build()
