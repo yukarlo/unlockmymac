@@ -21,15 +21,19 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -39,6 +43,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -86,6 +93,8 @@ fun HomeScreen(
             viewModel.onPermissionResult(bleGranted)
         }
 
+    var showMenu by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -94,6 +103,55 @@ fun HomeScreen(
                         stringResource(R.string.home_title),
                         fontWeight = FontWeight.Bold,
                     )
+                },
+                actions = {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "Options",
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(
+                                        if (state.pairedMac == null) {
+                                            R.string.home_pair_button
+                                        } else {
+                                            R.string.home_repair_button
+                                        },
+                                    )
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = null,
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onPair()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.home_diagnostics_button)) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.BugReport,
+                                    contentDescription = null,
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onDiagnostics()
+                            },
+                        )
+                    }
                 },
                 colors =
                     TopAppBarDefaults.topAppBarColors(
@@ -302,31 +360,7 @@ fun HomeScreen(
                 )
             }
 
-            // Main Actions
-            Button(
-                onClick = onPair,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.QrCodeScanner,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-                Text(
-                    stringResource(
-                        if (state.pairedMac == null) {
-                            R.string.home_pair_button
-                        } else {
-                            R.string.home_repair_button
-                        },
-                    ),
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-
-            // Only useful while the peripheral is meant to be up — resetting a stopped service
-            // would do nothing and just look broken.
+            // Reset Action (only active while service is enabled)
             if (state.settings?.serviceEnabled == true) {
                 OutlinedButton(
                     onClick = viewModel::forceReset,
@@ -355,18 +389,6 @@ fun HomeScreen(
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
                 )
-            }
-
-            TextButton(
-                onClick = onDiagnostics,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.BugReport,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 6.dp),
-                )
-                Text(stringResource(R.string.home_diagnostics_button), fontWeight = FontWeight.Medium)
             }
         }
     }
