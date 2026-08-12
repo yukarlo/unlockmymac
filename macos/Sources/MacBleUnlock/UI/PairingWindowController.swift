@@ -13,6 +13,8 @@ struct PairingView: View {
     @State private var statusMessage: String?
     @State private var isError: Bool = false
     @State private var isEnrolmentInFlight = false
+    @State private var isShowingPairingQR = false
+    @State private var scanWasRunningBeforeWindow = false
     @State private var isBlePairingInFlight: Bool = false
     @State private var cachedQRImage: NSImage?
 
@@ -71,12 +73,26 @@ struct PairingView: View {
 
                     Spacer()
 
-                    // Enrolment, not pairing: a watch has no camera, so an already-paired
-                    // device signs for it and this reads that signature over BLE.
+                    // A phone has a camera, so it pairs the ordinary way: show the QR again.
+                    Button {
+                        isShowingPairingQR = true
+                        cachedQRImage = nil
+                        setupPairingSession()
+                        statusMessage = "Scan the code with the new phone"
+                        isError = false
+                    } label: {
+                        Label("Pair another phone", systemImage: "qrcode")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isShowingPairingQR)
+
+                    // A watch has no camera, so an already-paired device signs for it instead and
+                    // this reads that signature over BLE.
                     Button {
                         addVouchedDevice()
                     } label: {
-                        Label("Add a device", systemImage: "plus.circle")
+                        Label("Add a companion device", systemImage: "applewatch")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -103,7 +119,9 @@ struct PairingView: View {
                 }
                 .padding()
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color(NSColor.controlBackgroundColor)))
-            } else {
+            }
+
+            if pairingManager.pairedDevices.isEmpty || isShowingPairingQR {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("1. Scan QR Code from Android App")
@@ -185,6 +203,17 @@ struct PairingView: View {
         }
         .padding()
         .frame(width: 420, height: 520)
+        .onAppear {
+            // Scanning normally runs only while the Mac is locked, which it never is while this
+            // window is in front of you — so without this nothing is ever discovered and both
+            // pairing and enrolment sit there finding no devices.
+            scanWasRunningBeforeWindow = bleCentral.isScanning
+            bleCentral.start()
+        }
+        .onDisappear {
+            if !scanWasRunningBeforeWindow { bleCentral.stop() }
+            isShowingPairingQR = false
+        }
     }
 
     private func setupPairingSession() {
@@ -205,14 +234,6 @@ struct PairingView: View {
         isError = false
         statusMessage = "Looking for a paired device…"
 
-        // Scanning normally runs only while the Mac is locked, so by the time the user is sitting
-        // here clicking, nothing has been discovered and the radio is off. Bring it up for this
-        // one operation — and remember whether it was already running, because locking the Mac
-        // mid-enrolment would otherwise leave auto-unlock with its radio switched off underneath
-        // it until the next lock.
-        let wasScanning = bleCentral.isScanning
-        bleCentral.start()
-
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.enrolmentScanSeconds) {
             let candidates = bleCentral.discoveredPeripherals.values
                 .sorted { ($0.averageRSSI ?? -200) > ($1.averageRSSI ?? -200) }
@@ -220,7 +241,6 @@ struct PairingView: View {
 
             guard let target = candidates.first else {
                 isEnrolmentInFlight = false
-                if !wasScanning { bleCentral.stop() }
                 statusMessage = "No paired device is in range"
                 isError = true
                 return
@@ -229,7 +249,6 @@ struct PairingView: View {
             statusMessage = "Asking \(target.name ?? "your device") if it is vouching for anything…"
             gattEnrolmentClient.readOffer(from: target) { result in
                 isEnrolmentInFlight = false
-                if !wasScanning { bleCentral.stop() }
                 switch result {
                 case .success(let device):
                     statusMessage = "Added \(device.name)"
@@ -247,7 +266,7 @@ struct PairingView: View {
 
     private func attemptAutoBlePairing(peripherals: [UUID: DiscoveredPeripheral]) {
         guard !isBlePairingInFlight,
-              !pairingManager.isPaired,
+              pairingManager.pairedDevices.isEmpty || isShowingPairingQR,
               let token = pairingManager.activePairingToken,
               let targetPeripheral = peripherals.values.first?.peripheral else { return }
 
@@ -261,6 +280,8 @@ struct PairingView: View {
             case .success(let paired):
                 statusMessage = "Paired successfully with '\(paired.name)'!"
                 isError = false
+                isShowingPairingQR = false
+                cachedQRImage = nil
             case .failure(let err):
                 statusMessage = "BLE pairing attempt failed: \(err.localizedDescription)"
                 isError = true
