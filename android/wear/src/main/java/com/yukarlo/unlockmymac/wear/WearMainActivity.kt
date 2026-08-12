@@ -5,15 +5,14 @@ import android.bluetooth.BluetoothManager
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,13 +21,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.CompactChip
+import androidx.wear.compose.material.ListHeader
 import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Scaffold
+import androidx.wear.compose.material.Switch
 import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.Chip
+import androidx.wear.compose.material.ToggleChip
 import com.yukarlo.unlockmymac.container
 import com.yukarlo.unlockmymac.data.AdvertiseMode
 import com.yukarlo.unlockmymac.permissions.BlePermissions
@@ -53,9 +60,6 @@ private fun WearHome() {
     val pairedMac by container.pairing.pairedMac.collectAsStateWithLifecycle(initialValue = null)
 
     var hasPermission by remember { mutableStateOf(BlePermissions.hasBleAccess(context)) }
-    // Declared in the manifest but never requested, so every approval prompt was posted into
-    // nothing: on API 33+ an ungranted POST_NOTIFICATIONS makes notify() a silent no-op, and the
-    // Mac just sat there waiting for an answer that could never be given.
     var hasNotificationPermission by remember {
         mutableStateOf(
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
@@ -65,7 +69,7 @@ private fun WearHome() {
     var enrolMessage by remember { mutableStateOf<String?>(null) }
 
     val permissionLauncher =
-        androidx.activity.compose.rememberLauncherForActivityResult(
+        rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions(),
         ) { granted ->
             hasPermission = BlePermissions.hasBleAccess(context)
@@ -74,7 +78,7 @@ private fun WearHome() {
                     ?: (
                         context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                             PackageManager.PERMISSION_GRANTED
-                    )
+                        )
         }
 
     val bluetoothOn =
@@ -82,155 +86,220 @@ private fun WearHome() {
             context.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true
         }
 
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 40.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text =
-                pairedMac?.let { stringOf(context, R.string.home_paired, it.name) }
-                    ?: context.getString(R.string.home_not_paired),
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.title3,
-        )
+    val listState = rememberScalingLazyListState()
 
-        if (!hasPermission) {
-            Text(
-                text = context.getString(R.string.home_permission_needed),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption2,
-            )
-            CompactChip(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    permissionLauncher.launch(
-                        arrayOf(
-                            Manifest.permission.BLUETOOTH_ADVERTISE,
-                            Manifest.permission.BLUETOOTH_CONNECT,
-                            Manifest.permission.POST_NOTIFICATIONS,
-                        ),
-                    )
-                },
-                label = { Text(context.getString(R.string.home_grant)) },
-            )
-            return@Column
-        }
-
-        if (!bluetoothOn) {
-            Text(
-                text = context.getString(R.string.home_bluetooth_off),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption2,
-            )
-        }
-
-        if (!hasNotificationPermission) {
-            Text(
-                text = context.getString(R.string.home_notifications_needed),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption2,
-            )
-            CompactChip(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
-                },
-                label = { Text(context.getString(R.string.home_grant)) },
-            )
-        }
-
-        val enabled = settings?.serviceEnabled == true
-        Chip(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = {
-                scope.launch {
-                    container.settings.setServiceEnabled(!enabled)
-                    if (!enabled) BleUnlockService.start(context) else BleUnlockService.stop(context)
-                }
-            },
-            label = { Text(context.getString(R.string.home_service_switch)) },
-            secondaryLabel = { Text(if (enabled) "On" else "Off") },
-        )
-
-        // Defaults to off, so without this the watch unlocks silently while the phone asks —
-        // a difference in what it takes to open the Mac that the wearer could not see or change.
-        val requireApproval = settings?.requireApproval == true
-        Chip(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = {
-                scope.launch { container.settings.setRequireApproval(!requireApproval) }
-            },
-            label = { Text(context.getString(R.string.home_require_approval)) },
-            secondaryLabel = { Text(if (requireApproval) "On" else "Off") },
-        )
-
-        // Discovery is the dominant cost of a watch unlock — 4.32s of a measured 7.36s, because
-        // low power advertises about once a second. Left off by default all the same: this is a
-        // watch battery, and that trade is the wearer's to make, not a default to impose.
-        val fastDiscovery = settings?.advertiseMode == AdvertiseMode.BALANCED
-        Chip(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = {
-                scope.launch {
-                    container.settings.setAdvertiseMode(
-                        if (fastDiscovery) AdvertiseMode.LOW_POWER else AdvertiseMode.BALANCED,
+    Scaffold(positionIndicator = { PositionIndicator(scalingLazyListState = listState) }) {
+        ScalingLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // Header / Title & Paired Mac Name
+            item {
+                ListHeader {
+                    Text(
+                        text = pairedMac?.name ?: context.getString(R.string.home_not_paired),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.title3,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colors.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-            },
-            label = { Text(context.getString(R.string.home_fast_discovery)) },
-            secondaryLabel = { Text(if (fastDiscovery) "On" else "Off") },
-        )
+            }
 
-        Text(
-            text = if (status.advertising.name == "ADVERTISING") "Broadcasting" else status.advertising.name.lowercase(),
-            style = MaterialTheme.typography.caption2,
-            textAlign = TextAlign.Center,
-        )
-
-        // Enrolment: the watch cannot scan the Mac's QR, so it asks the phone — already trusted by
-        // the Mac — to vouch for the key it just generated.
-        if (pairedMac == null) {
-            Text(
-                text = context.getString(R.string.home_enrol_hint),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption2,
-            )
-            CompactChip(
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(context.getString(R.string.home_enrol_send)) },
-                onClick = {
-                    scope.launch {
-                    enrolMessage =
-                        when (val result = WearEnrolmentSender.sendPublicKey(context)) {
-                            WearEnrolmentSender.Result.Sent -> {
-                                context.getString(R.string.home_enrol_offer_sent)
-                            }
-
-                            WearEnrolmentSender.Result.NoPhoneReachable -> {
-                                "Phone not reachable"
-                            }
-
-                            is WearEnrolmentSender.Result.Failed -> {
-                                result.reason
-                            }
-                        }
+            // Status Indicator Subtitle
+            item {
+                val statusText =
+                    when {
+                        !bluetoothOn -> context.getString(R.string.home_bluetooth_off)
+                        status.advertising.name == "ADVERTISING" -> "Broadcasting"
+                        status.connectedCentrals > 0 -> "Connected"
+                        else -> status.advertising.name.lowercase()
                     }
-                },
-            )
-            enrolMessage?.let {
-                Text(text = it, textAlign = TextAlign.Center, style = MaterialTheme.typography.caption2)
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.caption2,
+                    color = MaterialTheme.colors.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+
+            // Permission Warnings
+            if (!hasPermission) {
+                item {
+                    Text(
+                        text = context.getString(R.string.home_permission_needed),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption2,
+                    )
+                }
+                item {
+                    CompactChip(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            permissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.BLUETOOTH_ADVERTISE,
+                                    Manifest.permission.BLUETOOTH_CONNECT,
+                                    Manifest.permission.POST_NOTIFICATIONS,
+                                ),
+                            )
+                        },
+                        label = { Text(context.getString(R.string.home_grant)) },
+                    )
+                }
+                return@ScalingLazyColumn
+            }
+
+            if (!hasNotificationPermission) {
+                item {
+                    Text(
+                        text = context.getString(R.string.home_notifications_needed),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption2,
+                    )
+                }
+                item {
+                    CompactChip(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                        },
+                        label = { Text(context.getString(R.string.home_grant)) },
+                    )
+                }
+            }
+
+            // Toggle 1: Discoverable by Mac
+            item {
+                val enabled = settings?.serviceEnabled == true
+                ToggleChip(
+                    modifier = Modifier.fillMaxWidth(),
+                    checked = enabled,
+                    onCheckedChange = { newValue ->
+                        scope.launch {
+                            container.settings.setServiceEnabled(newValue)
+                            if (newValue) BleUnlockService.start(context) else BleUnlockService.stop(context)
+                        }
+                    },
+                    label = {
+                        Text(
+                            text = context.getString(R.string.home_service_switch),
+                            maxLines = 1,
+                            modifier = Modifier.basicMarquee(),
+                        )
+                    },
+                    secondaryLabel = {
+                        Text(if (enabled) "Active" else "Off")
+                    },
+                    toggleControl = {
+                        Switch(checked = enabled)
+                    },
+                )
+            }
+
+            // Toggle 2: Approve every request
+            item {
+                val requireApproval = settings?.requireApproval == true
+                ToggleChip(
+                    modifier = Modifier.fillMaxWidth(),
+                    checked = requireApproval,
+                    onCheckedChange = { newValue ->
+                        scope.launch { container.settings.setRequireApproval(newValue) }
+                    },
+                    label = {
+                        Text(
+                            text = context.getString(R.string.home_require_approval),
+                            maxLines = 1,
+                            modifier = Modifier.basicMarquee(),
+                        )
+                    },
+                    secondaryLabel = {
+                        Text(if (requireApproval) "Require tap" else "Auto-unlock")
+                    },
+                    toggleControl = {
+                        Switch(checked = requireApproval)
+                    },
+                )
+            }
+
+            // Toggle 3: Fast discovery mode
+            item {
+                val fastDiscovery = settings?.advertiseMode == AdvertiseMode.BALANCED
+                ToggleChip(
+                    modifier = Modifier.fillMaxWidth(),
+                    checked = fastDiscovery,
+                    onCheckedChange = { newValue ->
+                        scope.launch {
+                            container.settings.setAdvertiseMode(
+                                if (newValue) AdvertiseMode.BALANCED else AdvertiseMode.LOW_POWER,
+                            )
+                        }
+                    },
+                    label = {
+                        Text(
+                            text = context.getString(R.string.home_fast_discovery),
+                            maxLines = 1,
+                            modifier = Modifier.basicMarquee(),
+                        )
+                    },
+                    secondaryLabel = {
+                        Text(if (fastDiscovery) "Faster" else "Low power")
+                    },
+                    toggleControl = {
+                        Switch(checked = fastDiscovery)
+                    },
+                )
+            }
+
+            // Enrolment Card if not paired
+            if (pairedMac == null) {
+                item {
+                    Text(
+                        text = context.getString(R.string.home_enrol_hint),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption2,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                item {
+                    CompactChip(
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(context.getString(R.string.home_enrol_send)) },
+                        onClick = {
+                            scope.launch {
+                                enrolMessage =
+                                    when (val result = WearEnrolmentSender.sendPublicKey(context)) {
+                                        WearEnrolmentSender.Result.Sent -> {
+                                            context.getString(R.string.home_enrol_offer_sent)
+                                        }
+
+                                        WearEnrolmentSender.Result.NoPhoneReachable -> {
+                                            "Phone not reachable"
+                                        }
+
+                                        is WearEnrolmentSender.Result.Failed -> {
+                                            result.reason
+                                        }
+                                    }
+                            }
+                        },
+                    )
+                }
+                enrolMessage?.let { msg ->
+                    item {
+                        Text(
+                            text = msg,
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.caption2,
+                        )
+                    }
+                }
             }
         }
     }
 }
-
-private fun stringOf(
-    context: android.content.Context,
-    resId: Int,
-    arg: String,
-): String = context.getString(resId, arg)
