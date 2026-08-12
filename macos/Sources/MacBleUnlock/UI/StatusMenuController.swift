@@ -89,22 +89,30 @@ final class StatusMenuController: NSObject {
 
         // Paired device & signal info
         if !pairingManager.pairedDevices.isEmpty {
-            let names = pairingManager.pairedDevices.map(\.name).joined(separator: ", ")
-            menu.addItem(disabledItem(title: "Paired: \(names)"))
+            menu.addItem(disabledItem(title: "Paired Devices Signal:"))
 
-            let pairedEntry = bleCentral.discoveredPeripherals.values.first { entry in
-                if let authId = stateMachine.authenticatedPeripheralId {
-                    return entry.peripheral.identifier == authId
+            let discoveredValues = Array(bleCentral.discoveredPeripherals.values)
+
+            for device in pairingManager.pairedDevices {
+                let matchingEntry = discoveredValues.first { entry in
+                    if let authId = stateMachine.authenticatedPeripheralId, entry.peripheral.identifier == authId {
+                        return true
+                    }
+                    if entry.name.caseInsensitiveCompare(device.name) == .orderedSame ||
+                        entry.name.localizedCaseInsensitiveContains(device.name) ||
+                        device.name.localizedCaseInsensitiveContains(entry.name) {
+                        return true
+                    }
+                    return false
+                } ?? (discoveredValues.count == 1 && pairingManager.pairedDevices.count == 1 ? discoveredValues.first : nil)
+
+                if let entry = matchingEntry, let rssi = entry.averageRSSI {
+                    let rssiText = String(format: "%.0f dBm", rssi)
+                    let nearSuffix = entry.isNear ? " (near)" : " (far)"
+                    menu.addItem(disabledItem(title: "  \(device.name): \(rssiText)\(nearSuffix)"))
+                } else {
+                    menu.addItem(disabledItem(title: "  \(device.name): Out of range"))
                 }
-                return true
-            }
-
-            if let entry = pairedEntry, let rssi = entry.averageRSSI {
-                let rssiText = String(format: "%.0f dBm", rssi)
-                let nearSuffix = entry.isNear ? " (near)" : " (far)"
-                menu.addItem(disabledItem(title: "  Signal: \(rssiText)\(nearSuffix)"))
-            } else {
-                menu.addItem(disabledItem(title: "  Signal: Out of range"))
             }
         } else {
             menu.addItem(disabledItem(title: "No phone paired"))
