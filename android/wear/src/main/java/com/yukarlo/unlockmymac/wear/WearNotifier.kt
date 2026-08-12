@@ -21,7 +21,12 @@ import com.yukarlo.unlockmymac.service.UnlockNotifier
  */
 object WearNotifier : UnlockNotifier {
     private const val ONGOING_CHANNEL_ID = "wear_unlock_ongoing"
-    private const val APPROVAL_CHANNEL_ID = "wear_unlock_approval"
+    /**
+     * Bumped from `wear_unlock_approval`: a channel's vibration cannot be changed after it is
+     * created, so adding a buzz to an install that has already run needs a new channel.
+     */
+    private const val APPROVAL_CHANNEL_ID = "wear_unlock_approval_v2"
+    private const val LEGACY_APPROVAL_CHANNEL_ID = "wear_unlock_approval"
 
     override val ongoingNotificationId = 2001
     override val approvalNotificationId = 2002
@@ -49,8 +54,15 @@ object WearNotifier : UnlockNotifier {
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
                 description = context.getString(R.string.channel_approval_desc)
+                // A prompt on the wrist is worth nothing if it is silent — the wearer is not
+                // looking at the watch when the Mac decides to ask. Two short pulses, distinct
+                // from a message buzz.
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 200, 120, 200)
             },
         )
+
+        manager.deleteNotificationChannel(LEGACY_APPROVAL_CHANNEL_ID)
     }
 
     override fun ongoing(
@@ -87,6 +99,7 @@ object WearNotifier : UnlockNotifier {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .setContentIntent(approvalScreenIntent(context, challengeId, macName))
             // Nothing to bridge to and nothing worth bridging: the phone raises its own prompt
             // when it is the device being challenged.
             .setLocalOnly(true)

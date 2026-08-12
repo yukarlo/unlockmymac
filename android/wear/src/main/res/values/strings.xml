@@ -23,6 +23,7 @@
     <string name="home_paired">Paired with %1$s</string>
     <string name="home_permission_needed">Nearby devices permission is needed to broadcast.</string>
     <string name="home_grant">Grant</string>
+    <string name="home_notifications_needed">Approval prompts need notification permission.</string>
     <string name="home_bluetooth_off">Bluetooth is off.</string>
     <string name="home_enrol_hint">Open Mac unlock on your phone to authorise this watch.</string>
     <string name="home_enrol_offer_sent">Key sent to your phone.</string>

@@ -53,13 +53,28 @@ private fun WearHome() {
     val pairedMac by container.pairing.pairedMac.collectAsStateWithLifecycle(initialValue = null)
 
     var hasPermission by remember { mutableStateOf(BlePermissions.hasBleAccess(context)) }
+    // Declared in the manifest but never requested, so every approval prompt was posted into
+    // nothing: on API 33+ an ungranted POST_NOTIFICATIONS makes notify() a silent no-op, and the
+    // Mac just sat there waiting for an answer that could never be given.
+    var hasNotificationPermission by remember {
+        mutableStateOf(
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED,
+        )
+    }
     var enrolMessage by remember { mutableStateOf<String?>(null) }
 
     val permissionLauncher =
         androidx.activity.compose.rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions(),
         ) { granted ->
-            hasPermission = granted.values.all { it }
+            hasPermission = BlePermissions.hasBleAccess(context)
+            hasNotificationPermission =
+                granted[Manifest.permission.POST_NOTIFICATIONS]
+                    ?: (
+                        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                            PackageManager.PERMISSION_GRANTED
+                    )
         }
 
     val bluetoothOn =
@@ -97,6 +112,7 @@ private fun WearHome() {
                         arrayOf(
                             Manifest.permission.BLUETOOTH_ADVERTISE,
                             Manifest.permission.BLUETOOTH_CONNECT,
+                            Manifest.permission.POST_NOTIFICATIONS,
                         ),
                     )
                 },
@@ -110,6 +126,21 @@ private fun WearHome() {
                 text = context.getString(R.string.home_bluetooth_off),
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.caption2,
+            )
+        }
+
+        if (!hasNotificationPermission) {
+            Text(
+                text = context.getString(R.string.home_notifications_needed),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.caption2,
+            )
+            CompactChip(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                },
+                label = { Text(context.getString(R.string.home_grant)) },
             )
         }
 
