@@ -34,6 +34,14 @@ class BleAdvertiser(
 
     private var advertiser: BluetoothLeAdvertiser? = null
 
+    /**
+     * The mode the live advertisement was started with, so a changed setting can be noticed.
+     *
+     * An `AdvertiseSettings` is fixed once handed to the controller; changing the interval means
+     * tearing the advertisement down and raising a new one.
+     */
+    private var activeMode: AdvertiseMode? = null
+
     private val callback =
         object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
@@ -52,7 +60,19 @@ class BleAdvertiser(
 
     @SuppressLint("MissingPermission") // Guarded by BlePermissions.hasBleAccess below.
     fun start(mode: AdvertiseMode) {
-        if (advertiser != null) return
+        if (advertiser != null) {
+            // Already up in the mode asked for; nothing to do.
+            if (activeMode == mode) return
+
+            // Already up in a *different* mode. This used to return here too, which silently
+            // discarded the change: `applyState` calls this on every settings edit, so toggling
+            // fast discovery did nothing until the advertisement happened to be torn down for
+            // some other reason — in practice the restart after the next connection. Measured as
+            // a toggle that appeared to work only from the following unlock onwards.
+            eventLog.info("Advertising mode changed to ${mode.name.lowercase()}")
+            restart(mode)
+            return
+        }
 
         if (!BlePermissions.hasBleAccess(context)) {
             status.setAdvertising(AdvertisingState.NO_PERMISSION)
@@ -123,9 +143,11 @@ class BleAdvertiser(
                 .build()
 
         advertiser = leAdvertiser
+        activeMode = mode
         runCatching { leAdvertiser.startAdvertising(settings, advertiseData, scanResponse, callback) }
             .onFailure {
                 advertiser = null
+                activeMode = null
                 status.setAdvertising(AdvertisingState.FAILED, it.message)
                 eventLog.error("Advertising could not start: ${it.message}")
             }
@@ -135,6 +157,7 @@ class BleAdvertiser(
     fun stop() {
         val current = advertiser ?: return
         advertiser = null
+        activeMode = null
         runCatching { current.stopAdvertising(callback) }
             .onFailure { Log.w(TAG, "stopAdvertising threw", it) }
         status.setAdvertising(AdvertisingState.STOPPED)
