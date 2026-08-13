@@ -8,6 +8,15 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Required from API 34 to raise the approval screen without a tap. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <!--
+      Not used to draw anything. It is the one background-activity-launch exemption this app can
+      hold itself. On this watch the full-screen intent is sent by Samsung's Wear sysui rather than
+      by the notification service, so the framework's automatic exemption does not apply, and the
+      launch is refused with both the creator and the sender opted in
+      (balAllowedByPiCreator/PiSender: BSP.ALLOW_BAL, result: BAL_BLOCK). The refusal was recorded
+      immediately after a SYSTEM_ALERT_WINDOW check, which is the check this satisfies.
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>

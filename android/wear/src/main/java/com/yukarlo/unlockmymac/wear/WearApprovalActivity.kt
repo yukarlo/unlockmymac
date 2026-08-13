@@ -4,12 +4,6 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +14,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.CompactChip
 import androidx.wear.compose.material.MaterialTheme
@@ -27,6 +24,9 @@ import androidx.wear.compose.material.Text
 import com.yukarlo.unlockmymac.container
 import com.yukarlo.unlockmymac.service.ApprovalMirror
 import com.yukarlo.unlockmymac.service.BleUnlockService
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /**
  * Full-screen "may I unlock?" prompt, so answering takes one deliberate tap rather than finding
@@ -54,6 +54,7 @@ import com.yukarlo.unlockmymac.service.BleUnlockService
 class WearApprovalActivity : ComponentActivity() {
     private var challengeId: Long = -1L
     private var originNodeId: String? = null
+    private var probe = false
     private var resolved = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,11 +67,20 @@ class WearApprovalActivity : ComponentActivity() {
         challengeId = intent.getLongExtra(EXTRA_CHALLENGE_ID, -1L)
         val macName = intent.getStringExtra(EXTRA_MAC_NAME)
         originNodeId = intent.getStringExtra(EXTRA_ORIGIN_NODE)
+        probe = intent.getBooleanExtra(EXTRA_PROBE, false)
 
-        Log.i(TAG, "Approval screen for challenge=$challengeId origin=$originNodeId")
+        Log.i(TAG, "Approval screen for challenge=$challengeId origin=$originNodeId probe=$probe")
 
         if (challengeId < 0) {
             finish()
+            return
+        }
+
+        // A probe has no challenge behind it, so the watcher below would see a pending id of null,
+        // decide the question had been answered elsewhere and close before anything was drawn.
+        if (probe) {
+            Log.i(TAG, "Probe prompt — not backed by a challenge")
+            drawPrompt(macName)
             return
         }
 
@@ -101,6 +111,10 @@ class WearApprovalActivity : ComponentActivity() {
             }
         }
 
+        drawPrompt(macName)
+    }
+
+    private fun drawPrompt(macName: String?) {
         setContent {
             MaterialTheme {
                 Column(
@@ -113,8 +127,19 @@ class WearApprovalActivity : ComponentActivity() {
                 ) {
                     Text(
                         text =
-                            macName?.let { getString(R.string.notification_approval_title_mac, it) }
-                                ?: getString(R.string.notification_approval_title),
+                            when {
+                                probe -> {
+                                    getString(R.string.approval_probe_title)
+                                }
+
+                                macName != null -> {
+                                    getString(R.string.notification_approval_title_mac, macName)
+                                }
+
+                                else -> {
+                                    getString(R.string.notification_approval_title)
+                                }
+                            },
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.title3,
                     )
@@ -157,6 +182,12 @@ class WearApprovalActivity : ComponentActivity() {
     private fun resolve(approved: Boolean) {
         if (resolved) return
         resolved = true
+        if (probe) {
+            Log.i(TAG, "Probe answered ${if (approved) "approve" else "deny"} — nothing to resolve")
+            container.notifier.cancelApproval(this)
+            finish()
+            return
+        }
         val origin = originNodeId
         if (origin == null) {
             BleUnlockService.resolveApproval(this, challengeId, approved)
@@ -173,6 +204,7 @@ class WearApprovalActivity : ComponentActivity() {
         const val EXTRA_CHALLENGE_ID = "challenge_id"
         const val EXTRA_MAC_NAME = "mac_name"
         const val EXTRA_ORIGIN_NODE = "origin_node"
+        const val EXTRA_PROBE = "probe"
         private const val TAG = "WearApproval"
     }
 }

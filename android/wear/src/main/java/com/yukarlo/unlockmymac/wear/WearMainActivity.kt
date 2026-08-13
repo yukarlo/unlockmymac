@@ -1,9 +1,16 @@
 package com.yukarlo.unlockmymac.wear
 
 import android.Manifest
+import android.app.NotificationManager
 import android.bluetooth.BluetoothManager
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -37,10 +44,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.AutoCenteringParams
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
+import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.CompactChip
 import androidx.wear.compose.material.ListHeader
@@ -79,7 +89,15 @@ private fun WearHome() {
                 PackageManager.PERMISSION_GRANTED,
         )
     }
+    var missingGrants by remember { mutableStateOf(missingFullScreenGrants(context)) }
     var enrolMessage by remember { mutableStateOf<String?>(null) }
+    var probeMessage by remember { mutableStateOf<String?>(null) }
+
+    // These are granted from outside the app entirely, so the only moment we can learn the answer
+    // is when we come back to the foreground.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        missingGrants = missingFullScreenGrants(context)
+    }
 
     val permissionLauncher =
         rememberLauncherForActivityResult(
@@ -91,7 +109,7 @@ private fun WearHome() {
                     ?: (
                         context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                             PackageManager.PERMISSION_GRANTED
-                        )
+                    )
         }
 
     val bluetoothOn =
@@ -105,33 +123,38 @@ private fun WearHome() {
     val requireApproval = settings?.requireApproval == true
     val fastDiscovery = settings?.advertiseMode == AdvertiseMode.BALANCED
 
-    val statusText = remember(bluetoothOn, status) {
-        when {
-            !bluetoothOn -> context.getString(R.string.home_bluetooth_off)
-            status.advertising.name == "ADVERTISING" -> "Broadcasting"
-            status.connectedCentrals > 0 -> "Connected"
-            else -> status.advertising.name.lowercase()
+    val statusText =
+        remember(bluetoothOn, status) {
+            when {
+                !bluetoothOn -> context.getString(R.string.home_bluetooth_off)
+                status.advertising.name == "ADVERTISING" -> "Broadcasting"
+                status.connectedCentrals > 0 -> "Connected"
+                else -> status.advertising.name.lowercase()
+            }
         }
-    }
 
-    val serviceDesc = remember(serviceEnabled) {
-        if (serviceEnabled) "Broadcast signal to unlock Mac" else "Disabled"
-    }
-    val approvalDesc = remember(requireApproval) {
-        if (requireApproval) "Require tap on watch" else "Auto-unlock without asking"
-    }
-    val discoveryDesc = remember(fastDiscovery) {
-        if (fastDiscovery) "Faster detection, uses more battery" else "Standard power mode"
-    }
+    val serviceDesc =
+        remember(serviceEnabled) {
+            if (serviceEnabled) "Broadcast signal to unlock Mac" else "Disabled"
+        }
+    val approvalDesc =
+        remember(requireApproval) {
+            if (requireApproval) "Require tap on watch" else "Auto-unlock without asking"
+        }
+    val discoveryDesc =
+        remember(fastDiscovery) {
+            if (fastDiscovery) "Faster detection, uses more battery" else "Standard power mode"
+        }
 
     Scaffold(positionIndicator = { PositionIndicator(scalingLazyListState = listState) }) {
         ScalingLazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = listState,
-            scalingParams = ScalingLazyColumnDefaults.scalingParams(
-                edgeScale = 1.0f,
-                edgeAlpha = 1.0f,
-            ),
+            scalingParams =
+                ScalingLazyColumnDefaults.scalingParams(
+                    edgeScale = 1.0f,
+                    edgeAlpha = 1.0f,
+                ),
             autoCentering = AutoCenteringParams(itemIndex = 1),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -201,6 +224,28 @@ private fun WearHome() {
                             permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
                         },
                         label = { Text(context.getString(R.string.home_grant)) },
+                    )
+                }
+            } else if (missingGrants.isNotEmpty()) {
+                // No Grant button here, deliberately. Both of these are app-ops and Wear's
+                // cut-down Settings has a screen for neither: on a Galaxy Watch 6
+                // ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT does not resolve at all, and
+                // ACTION_MANAGE_OVERLAY_PERMISSION opens a page that has no such toggle. A button
+                // would land you somewhere with nothing to switch on, so this says what to run
+                // instead. Without these the approval screen is refused on a sleeping watch and
+                // the prompt waits in the shade to be found by hand.
+                item {
+                    Text(
+                        text = context.getString(R.string.home_adb_grant_needed),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption2,
+                    )
+                }
+                items(missingGrants) { op ->
+                    Text(
+                        text = context.getString(R.string.home_adb_grant_command, context.packageName, op),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption3,
                     )
                 }
             }
@@ -296,6 +341,33 @@ private fun WearHome() {
                 }
             }
 
+            // Fires an approval prompt that resolves nothing, after a delay long enough to put the
+            // watch back to sleep. Without it, every test of how the prompt is presented needed the
+            // Mac locked and a walk away from it.
+            item {
+                CompactChip(
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(context.getString(R.string.home_probe)) },
+                    onClick = {
+                        WearApprovalProbe.schedule(context)
+                        probeMessage =
+                            context.getString(
+                                R.string.home_probe_scheduled,
+                                WearApprovalProbe.DELAY_SECONDS,
+                            )
+                    },
+                )
+            }
+            probeMessage?.let { msg ->
+                item {
+                    Text(
+                        text = msg,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.caption2,
+                    )
+                }
+            }
+
             // Bottom padding spacer so bottom card item can scroll fully into view
             item {
                 Spacer(modifier = Modifier.height(24.dp))
@@ -303,6 +375,26 @@ private fun WearHome() {
         }
     }
 }
+
+/**
+ * The app-ops still needed before the approval screen can take a sleeping watch, as `appops` names
+ * them, so the strings double as the command to run.
+ *
+ * Two separate gates, and measurement showed the second is the one that bites. With only
+ * `USE_FULL_SCREEN_INTENT` the launch is still refused as a background activity start; granting
+ * `SYSTEM_ALERT_WINDOW` is what let it through, and revoking it again brought the refusal straight
+ * back. Nothing is ever drawn over anything — it is held purely as the one background-launch
+ * exemption this app can hold in its own right.
+ */
+private fun missingFullScreenGrants(context: Context): List<String> =
+    buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() != true
+        ) {
+            add("USE_FULL_SCREEN_INTENT")
+        }
+        if (!Settings.canDrawOverlays(context)) add("SYSTEM_ALERT_WINDOW")
+    }
 
 @Composable
 private fun WearSettingItem(
@@ -313,12 +405,13 @@ private fun WearSettingItem(
     shape: Shape = RoundedCornerShape(20.dp),
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(Color(0xFF242428))
-            .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(Color(0xFF242428))
+                .clickable { onCheckedChange(!checked) }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -326,36 +419,40 @@ private fun WearSettingItem(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 10.dp),
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.body1.copy(
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                    ),
+                    style =
+                        MaterialTheme.typography.body1.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        ),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = description,
-                    style = MaterialTheme.typography.caption2.copy(
-                        color = Color(0xFF8AB4F8),
-                        fontWeight = FontWeight.Normal,
-                    ),
+                    style =
+                        MaterialTheme.typography.caption2.copy(
+                            color = Color(0xFF8AB4F8),
+                            fontWeight = FontWeight.Normal,
+                        ),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
 
             Box(
-                modifier = Modifier
-                    .height(28.dp)
-                    .width(1.dp)
-                    .background(Color(0x33FFFFFF)),
+                modifier =
+                    Modifier
+                        .height(28.dp)
+                        .width(1.dp)
+                        .background(Color(0x33FFFFFF)),
             )
 
             Switch(

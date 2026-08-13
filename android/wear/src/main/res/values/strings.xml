@@ -24,6 +24,11 @@
     <string name="home_permission_needed">Nearby devices permission is needed to broadcast.</string>
     <string name="home_grant">Grant</string>
     <string name="home_notifications_needed">Approval prompts need notification permission.</string>
+    <string name="home_adb_grant_needed">Approvals cannot wake the watch yet. Wear has no setting for this, so run over adb:</string>
+    <string name="home_adb_grant_command">appops set %1$s %2$s allow</string>
+    <string name="home_probe">Test prompt</string>
+    <string name="home_probe_scheduled">Lower your wrist. Prompt in %1$ds.</string>
+    <string name="approval_probe_title">Test prompt</string>
     <string name="home_bluetooth_off">Bluetooth is off.</string>
     <string name="home_enrol_hint">Open Mac unlock on your phone to authorise this watch.</string>
     <string name="home_enrol_offer_sent">Key sent to your phone.</string>
