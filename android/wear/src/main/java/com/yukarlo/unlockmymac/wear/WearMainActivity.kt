@@ -8,11 +8,21 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +31,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,7 +47,6 @@ import androidx.wear.compose.material.PositionIndicator
 import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Switch
 import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.ToggleChip
 import com.yukarlo.unlockmymac.container
 import com.yukarlo.unlockmymac.data.AdvertiseMode
 import com.yukarlo.unlockmymac.permissions.BlePermissions
@@ -92,6 +103,7 @@ private fun WearHome() {
         ScalingLazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = listState,
+            contentPadding = PaddingValues(top = 28.dp, bottom = 48.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -152,10 +164,7 @@ private fun WearHome() {
                         label = { Text(context.getString(R.string.home_grant)) },
                     )
                 }
-                return@ScalingLazyColumn
-            }
-
-            if (!hasNotificationPermission) {
+            } else if (!hasNotificationPermission) {
                 item {
                     Text(
                         text = context.getString(R.string.home_notifications_needed),
@@ -174,86 +183,53 @@ private fun WearHome() {
                 }
             }
 
-            // Toggle 1: Discoverable by Mac
+            // Settings Card Container matching screenshot
             item {
-                val enabled = settings?.serviceEnabled == true
-                ToggleChip(
-                    modifier = Modifier.fillMaxWidth(),
-                    checked = enabled,
-                    onCheckedChange = { newValue ->
-                        scope.launch {
-                            container.settings.setServiceEnabled(newValue)
-                            if (newValue) BleUnlockService.start(context) else BleUnlockService.stop(context)
-                        }
-                    },
-                    label = {
-                        Text(
-                            text = context.getString(R.string.home_service_switch),
-                            maxLines = 1,
-                            modifier = Modifier.basicMarquee(),
-                        )
-                    },
-                    secondaryLabel = {
-                        Text(if (enabled) "Active" else "Off")
-                    },
-                    toggleControl = {
-                        Switch(checked = enabled)
-                    },
-                )
-            }
-
-            // Toggle 2: Approve every request
-            item {
+                val serviceEnabled = settings?.serviceEnabled == true
                 val requireApproval = settings?.requireApproval == true
-                ToggleChip(
-                    modifier = Modifier.fillMaxWidth(),
-                    checked = requireApproval,
-                    onCheckedChange = { newValue ->
-                        scope.launch { container.settings.setRequireApproval(newValue) }
-                    },
-                    label = {
-                        Text(
-                            text = context.getString(R.string.home_require_approval),
-                            maxLines = 1,
-                            modifier = Modifier.basicMarquee(),
-                        )
-                    },
-                    secondaryLabel = {
-                        Text(if (requireApproval) "Require tap" else "Auto-unlock")
-                    },
-                    toggleControl = {
-                        Switch(checked = requireApproval)
-                    },
-                )
-            }
-
-            // Toggle 3: Fast discovery mode
-            item {
                 val fastDiscovery = settings?.advertiseMode == AdvertiseMode.BALANCED
-                ToggleChip(
-                    modifier = Modifier.fillMaxWidth(),
-                    checked = fastDiscovery,
-                    onCheckedChange = { newValue ->
-                        scope.launch {
-                            container.settings.setAdvertiseMode(
-                                if (newValue) AdvertiseMode.BALANCED else AdvertiseMode.LOW_POWER,
-                            )
-                        }
-                    },
-                    label = {
-                        Text(
-                            text = context.getString(R.string.home_fast_discovery),
-                            maxLines = 1,
-                            modifier = Modifier.basicMarquee(),
-                        )
-                    },
-                    secondaryLabel = {
-                        Text(if (fastDiscovery) "Faster" else "Low power")
-                    },
-                    toggleControl = {
-                        Switch(checked = fastDiscovery)
-                    },
-                )
+
+                WearSettingCard {
+                    // Row 1: Discoverable by Mac
+                    WearSettingRow(
+                        title = context.getString(R.string.home_service_switch),
+                        description = if (serviceEnabled) "Broadcast signal to unlock Mac" else "Disabled",
+                        checked = serviceEnabled,
+                        onCheckedChange = { newValue ->
+                            scope.launch {
+                                container.settings.setServiceEnabled(newValue)
+                                if (newValue) BleUnlockService.start(context) else BleUnlockService.stop(context)
+                            }
+                        },
+                        showDividerBelow = true,
+                    )
+
+                    // Row 2: Approve every request
+                    WearSettingRow(
+                        title = context.getString(R.string.home_require_approval),
+                        description = if (requireApproval) "Require tap on watch" else "Auto-unlock without asking",
+                        checked = requireApproval,
+                        onCheckedChange = { newValue ->
+                            scope.launch { container.settings.setRequireApproval(newValue) }
+                        },
+                        showDividerBelow = true,
+                    )
+
+                    // Row 3: Fast discovery mode
+                    WearSettingRow(
+                        title = context.getString(R.string.home_fast_discovery),
+                        description = if (fastDiscovery) "Faster detection, uses more battery" else "Standard power mode",
+                        checked = fastDiscovery,
+                        onCheckedChange = { newValue ->
+                            scope.launch {
+                                container.settings.setAdvertiseMode(
+                                    if (newValue) AdvertiseMode.BALANCED else AdvertiseMode.LOW_POWER,
+                                )
+                            }
+                        },
+                        showDividerBelow = false,
+                    )
+                }
             }
 
             // Enrolment Card if not paired
@@ -300,6 +276,97 @@ private fun WearHome() {
                     }
                 }
             }
+
+            // Bottom padding spacer so bottom card item can scroll fully into view
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun WearSettingCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(26.dp))
+            .background(Color(0xFF242428)),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun WearSettingRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    showDividerBelow: Boolean = false,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onCheckedChange(!checked) }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.body1.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                    ),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.caption2.copy(
+                        color = Color(0xFF8AB4F8),
+                        fontWeight = FontWeight.Normal,
+                    ),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .height(30.dp)
+                    .width(1.dp)
+                    .background(Color(0x33FFFFFF)),
+            )
+
+            Switch(
+                checked = checked,
+                modifier = Modifier.padding(start = 10.dp),
+            )
+        }
+
+        if (showDividerBelow) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .padding(horizontal = 14.dp)
+                    .background(Color(0x22FFFFFF)),
+            )
         }
     }
 }

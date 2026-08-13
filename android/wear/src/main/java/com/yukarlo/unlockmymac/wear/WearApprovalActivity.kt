@@ -1,8 +1,6 @@
 package com.yukarlo.unlockmymac.wear
 
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.VibratorManager
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -64,8 +62,6 @@ class WearApprovalActivity : ComponentActivity() {
         // Shown while the watch is locked and the screen is off — this is the whole point.
         setShowWhenLocked(true)
         setTurnScreenOn(true)
-
-        buzz()
 
         challengeId = intent.getLongExtra(EXTRA_CHALLENGE_ID, -1L)
         val macName = intent.getStringExtra(EXTRA_MAC_NAME)
@@ -143,21 +139,6 @@ class WearApprovalActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    /**
-     * Buzzes the wrist directly rather than relying on the notification channel.
-     *
-     * A full-screen intent launches this activity *instead of* posting a heads-up, so the
-     * channel's vibration never plays on the path that matters — the one where the screen was off
-     * and the wearer has no other way of knowing the Mac asked.
-     */
-    private fun buzz() {
-        val vibrator =
-            (getSystemService(VibratorManager::class.java))?.defaultVibrator ?: return
-        vibrator.vibrate(
-            VibrationEffect.createWaveform(longArrayOf(0, 200, 120, 200), -1),
-        )
     }
 
     /** Walking away is not consent, but neither is it a refusal — let the challenge expire. */

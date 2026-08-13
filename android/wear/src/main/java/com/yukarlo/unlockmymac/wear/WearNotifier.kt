@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.VibrationEffect
+import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.yukarlo.unlockmymac.service.ApprovalActionReceiver
@@ -27,6 +29,9 @@ object WearNotifier : UnlockNotifier {
      */
     private const val APPROVAL_CHANNEL_ID = "wear_unlock_approval_v2"
     private const val LEGACY_APPROVAL_CHANNEL_ID = "wear_unlock_approval"
+
+    /** Two short pulses, deliberately unlike a message buzz. */
+    private val APPROVAL_PATTERN = longArrayOf(0, 200, 120, 200)
 
     override val ongoingNotificationId = 2001
     override val approvalNotificationId = 2002
@@ -58,7 +63,7 @@ object WearNotifier : UnlockNotifier {
                 // looking at the watch when the Mac decides to ask. Two short pulses, distinct
                 // from a message buzz.
                 enableVibration(true)
-                vibrationPattern = longArrayOf(0, 200, 120, 200)
+                vibrationPattern = APPROVAL_PATTERN
             },
         )
 
@@ -87,6 +92,12 @@ object WearNotifier : UnlockNotifier {
         macName: String?,
         originNodeId: String?,
     ): Notification {
+        // Buzz here rather than from the approval screen. Measured on a watch asleep for a few
+        // minutes: the full-screen intent did not launch, so the activity never ran and nothing
+        // vibrated — the prompt sat silently in the shade until it was found by hand. Posting the
+        // notification is the one step that always happens.
+        buzz(context)
+
         val title =
             macName?.let { context.getString(R.string.notification_approval_title_mac, it) }
                 ?: context.getString(R.string.notification_approval_title)
@@ -116,6 +127,18 @@ object WearNotifier : UnlockNotifier {
                 context.getString(R.string.action_approve),
                 approvalAction(context, challengeId, approved = true, originNodeId = originNodeId),
             ).build()
+    }
+
+    /**
+     * Vibrates directly instead of leaving it to the channel.
+     *
+     * The channel carries a vibration pattern already, but it only plays when the system chooses
+     * to present the notification, and on a watch deep in doze it was observed not to. A prompt
+     * the wearer never feels is the same as no prompt, so this does not delegate.
+     */
+    private fun buzz(context: Context) {
+        val vibrator = context.getSystemService(VibratorManager::class.java)?.defaultVibrator ?: return
+        vibrator.vibrate(VibrationEffect.createWaveform(APPROVAL_PATTERN, -1))
     }
 
     override fun cancelApproval(context: Context) {
