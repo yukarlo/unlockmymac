@@ -170,15 +170,20 @@ final class GATTChallengeClient: NSObject {
 
     /// How long past a scheduled read to wait before assuming its reply is not coming.
     ///
-    /// Generous against the 250ms fast poll: a reply merely running late must not be raced, or
-    /// the Mac would issue a second read the phone is already answering.
-    private static let approvalReadWatchdogGrace: TimeInterval = 3
+    /// Wide enough against the 250ms fast poll that a reply merely running late is not raced into
+    /// a duplicate read, but tightened from 3s once the escalation below started colliding with
+    /// the Mac's 30s lock-screen display timeout. Every healthy reply measured has arrived inside
+    /// a few hundred milliseconds; nothing has ever been answered between 2s and 3s.
+    private static let approvalReadWatchdogGrace: TimeInterval = 2
 
     /// How many unanswered re-reads before the connection itself is treated as the fault.
     ///
-    /// Re-reading is worth doing once or twice — a single dropped reply is cheap to recover from.
-    /// Beyond that the link is not carrying ATT traffic and no number of further reads will help.
-    private static let maxApprovalReadRetries = 2
+    /// One retry covers a single dropped reply, which is the only case re-reading can win. Beyond
+    /// that the link is not carrying ATT traffic and asking again cannot help — so the second
+    /// retry only spent time. Measured 21:44: escalation took 10s from delivery stopping, and by
+    /// the time the replacement handshake was up the Mac's 30s lock-screen display timeout left it
+    /// 2.3s to live. The approval landed 233ms before the display slept and was thrown away.
+    private static let maxApprovalReadRetries = 1
 
     init(bleCentral: BLECentralManager, pairingManager: PairingManager) {
         self.bleCentral = bleCentral
