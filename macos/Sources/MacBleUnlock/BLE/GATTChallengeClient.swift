@@ -468,31 +468,19 @@ extension GATTChallengeClient: CBPeripheralDelegate {
 
     private func targetDeviceName(for peripheral: CBPeripheral) -> String {
         let rawName = bleCentral.discoveredPeripherals[peripheral.identifier]?.name ?? peripheral.name ?? ""
-        let friendly = DeviceModelMapper.friendlyName(for: rawName)
-        return friendly.isEmpty ? "device" : friendly
-    }
-
-    private func targetDeviceCategory(for peripheral: CBPeripheral) -> String {
-        let name = targetDeviceName(for: peripheral).lowercased()
-        if name.contains("watch") {
-            return "watch"
-        } else if name.contains("phone") || name.contains("fold") || name.contains("flip") || name.contains("galaxy s") || name.contains("galaxy a") || name.contains("pixel") {
-            return "phone"
-        }
-        return "device"
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "device" : trimmed
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral === activePeripheral, characteristic.uuid == BLEProtocol.responseCharacteristicUUID else { return }
         if let error {
             let nsError = error as NSError
-            let category = targetDeviceCategory(for: peripheral)
             let deviceName = targetDeviceName(for: peripheral)
-            let deviceLabel = deviceName != "device" ? deviceName : "your \(category)"
 
             // 0x80 (128) is GATT status PENDING_APPROVAL returned when "Approve every request" is enabled on Android
             if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 128 {
-                EventLogger.shared.info(category: "Unlock", "Waiting for you to approve on \(deviceLabel)…")
+                EventLogger.shared.info(category: "Unlock", "Waiting for you to approve on \(deviceName)…")
 
                 // Arm 60s approval timeout once when approval pending is first encountered
                 if !isApprovalPending {
@@ -505,7 +493,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
                 // interval here while the delay was adaptive meant every early poll logged a
                 // cadence six times slower than the one it actually used.
                 let delay = approvalReadDelay()
-                log.notice("\(category.capitalized) is waiting for the user to approve; will re-read in \(Int(delay * 1000))ms (ATT 0x80)")
+                log.notice("\(deviceName, privacy: .public) is waiting for the user to approve; will re-read in \(Int(delay * 1000))ms (ATT 0x80)")
 
                 bleCentral.queue.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self, self.activePeripheral === peripheral else { return }
@@ -517,8 +505,8 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             // 0x82 (130) is DENIED — the user tapped Deny. Distinct from the opaque 0x81 so we
             // can back off properly instead of re-challenging and raising another prompt.
             if (nsError.domain == CBATTErrorDomain || nsError.domain.contains("ATT")) && nsError.code == 130 {
-                log.notice("\(category.capitalized) reported the request was denied by the user (ATT 0x82)")
-                EventLogger.shared.warning(category: "Unlock", "You denied this unlock on \(deviceLabel) — the Mac will not ask again for 2 minutes")
+                log.notice("\(deviceName, privacy: .public) reported the request was denied by the user (ATT 0x82)")
+                EventLogger.shared.warning(category: "Unlock", "You denied this unlock on \(deviceName) — the Mac will not ask again for 2 minutes")
                 finish(.failure(.deniedByUser), for: peripheral, disconnect: true)
                 return
             }

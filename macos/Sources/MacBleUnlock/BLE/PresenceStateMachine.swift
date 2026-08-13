@@ -440,8 +440,8 @@ final class PresenceStateMachine: ObservableObject {
 
     private func targetDeviceName(for peripheral: CBPeripheral) -> String {
         let rawName = bleCentral.discoveredPeripherals[peripheral.identifier]?.name ?? peripheral.name ?? ""
-        let friendly = DeviceModelMapper.friendlyName(for: rawName)
-        return friendly.isEmpty ? "paired device" : friendly
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "paired device" : trimmed
     }
 
     private func startHandshake(peripheral: CBPeripheral) {
