@@ -42,6 +42,16 @@ class BleAdvertiser(
      */
     private var activeMode: AdvertiseMode? = null
 
+    /**
+     * Serialises start/stop against each other.
+     *
+     * `applyState` runs from several collectors on `Dispatchers.IO`, so two of them could both see
+     * a null handle and both call `startAdvertising`. Measured 21:41:34.442 and 21:43:27.379: an
+     * `already started` failure 32ms and 15ms before a success, which is the loser of that race.
+     * The same fix as the one `GattServerController` needed for duplicate GATT servers.
+     */
+    private val lock = Any()
+
     private val callback =
         object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
@@ -52,14 +62,26 @@ class BleAdvertiser(
             override fun onStartFailure(errorCode: Int) {
                 status.setAdvertising(AdvertisingState.FAILED, describeError(errorCode))
                 eventLog.error("Advertising failed: ${describeError(errorCode)}")
-                advertiser = null
+
+                // ALREADY_STARTED means the controller *is* advertising, so keeping the handle is
+                // the accurate thing to do — and the necessary thing, because [stop] needs it to
+                // issue a real `stopAdvertising`. Clearing it here used to strand us advertising
+                // with no handle: every later restart then skipped the stop, hit a controller that
+                // was still going, and failed the same way. Observed self-perpetuating from
+                // 21:41:34 onwards, with no `Advertising stopped` line again.
+                if (errorCode != ADVERTISE_FAILED_ALREADY_STARTED) {
+                    synchronized(lock) {
+                        advertiser = null
+                        activeMode = null
+                    }
+                }
             }
         }
 
     val isAdvertising: Boolean get() = advertiser != null
 
     @SuppressLint("MissingPermission") // Guarded by BlePermissions.hasBleAccess below.
-    fun start(mode: AdvertiseMode) {
+    fun start(mode: AdvertiseMode) = synchronized<Unit>(lock) {
         if (advertiser != null) {
             // Already up in the mode asked for; nothing to do.
             if (activeMode == mode) return
@@ -154,7 +176,7 @@ class BleAdvertiser(
     }
 
     @SuppressLint("MissingPermission") // Stopping is harmless if the permission was revoked.
-    fun stop() {
+    fun stop() = synchronized<Unit>(lock) {
         val current = advertiser ?: return
         advertiser = null
         activeMode = null
