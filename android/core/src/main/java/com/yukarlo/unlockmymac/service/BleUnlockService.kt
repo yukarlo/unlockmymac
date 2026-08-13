@@ -142,6 +142,10 @@ class BleUnlockService :
                     appContainer.eventLog.info("Approval request expired; withdrawing the prompt")
                     onApprovalNoLongerValid()
                 }
+                // Also reconcile the central count here, so a dropped disconnect callback heals
+                // even when no further connection arrives to trigger one. Without it the count
+                // could stay wrong indefinitely, and with it the advertising restart below.
+                if (gattServer.isOpen) gattServer.publishConnectedCentrals()
             }
         }
 

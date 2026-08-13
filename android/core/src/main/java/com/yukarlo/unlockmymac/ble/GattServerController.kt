@@ -91,6 +91,46 @@ class GattServerController(
 
     private val connected: MutableSet<String> = Collections.synchronizedSet(LinkedHashSet())
 
+    /**
+     * Republishes the central count, reconciled against what the Bluetooth stack actually holds.
+     *
+     * [connected] only ever grew and shrank from callbacks, so a single missed
+     * `STATE_DISCONNECTED` stranded an address in it for the life of the GATT server. Observed as
+     * the app reporting two connected Macs when only one exists, and — because the post-disconnect
+     * advertising restart is gated on the count reaching zero — as that restart silently never
+     * running again: no `Central disconnected; restarting advertising` followed the disconnect at
+     * 22:04:04.
+     *
+     * `getConnectedDevices(GATT_SERVER)` is the stack's own answer, so a dropped callback
+     * self-heals on the next connection change or sweep instead of persisting. Falling back to the
+     * local set if the manager is unavailable keeps this no worse than before.
+     */
+    @SuppressLint("MissingPermission") // Reading connection state needs no permission we lack.
+    fun publishConnectedCentrals() {
+        val live =
+            runCatching {
+                context
+                    .getSystemService(BluetoothManager::class.java)
+                    ?.getConnectedDevices(BluetoothProfile.GATT_SERVER)
+                    ?.map { it.address }
+                    ?.toSet()
+            }.getOrNull()
+
+        if (live != null) {
+            synchronized(connected) {
+                val stale = connected - live
+                if (stale.isNotEmpty()) {
+                    eventLog.info("Dropping ${stale.size} central(s) the Bluetooth stack no longer holds")
+                    connected.removeAll(stale)
+                }
+            }
+        }
+
+        val count = connected.size
+        status.setConnectedCentrals(count)
+        listener.onConnectedCentralsChanged(count)
+    }
+
     /** Pairing identity blob, staged on a valid claim write and served on the following read. */
     @Volatile
     private var stagedPairingResponse: ByteArray? = null
@@ -259,9 +299,7 @@ class GattServerController(
                         if (hadPendingApproval) listener.onApprovalNoLongerValid()
                     }
                 }
-                val count = connected.size
-                status.setConnectedCentrals(count)
-                listener.onConnectedCentralsChanged(count)
+                publishConnectedCentrals()
             }
 
             override fun onCharacteristicWriteRequest(
