@@ -6,11 +6,11 @@ import os
 
 /// Presence state machine states per Section 6.3 of the implementation plan.
 enum PresenceState: String, CustomStringConvertible {
-    case absent = "Phone Away"
-    case candidateNear = "Phone Nearby"
-    case connecting = "Connecting to Phone…"
+    case absent = "Device Away"
+    case candidateNear = "Device Nearby"
+    case connecting = "Connecting to Device…"
     case authenticating = "Authenticating…"
-    case authenticatedNear = "Phone Authenticated"
+    case authenticatedNear = "Device Authenticated"
     case unlockCooldown = "Unlock Cooldown"
 
     var description: String { rawValue }
@@ -257,7 +257,8 @@ final class PresenceStateMachine: ObservableObject {
                 }
 
                 guard self.systemActionController.isScreenLocked else { return }
-                EventLogger.shared.info(category: "State", "Lock screen shown — asking the phone now")
+                let label = self.connectTarget().map { self.targetDeviceName(for: $0.peripheral) } ?? "paired device"
+                EventLogger.shared.info(category: "State", "Lock screen shown — asking \(label) now")
 
                 // A transport stall or a timeout from while the screen was dark should not
                 // delay the unlock the user is now actively waiting for. A denial is different:
@@ -283,10 +284,10 @@ final class PresenceStateMachine: ObservableObject {
     /// watching for the phone leaving any more.
     private func beginScanningForUnlock() {
         guard !isPaused, pairingManager.isPaired else { return }
-        EventLogger.shared.info(category: "State", "Screen locked — scanning for the paired phone")
+        EventLogger.shared.info(category: "State", "Screen locked — scanning for paired devices")
         bleCentral.start()
 
-        // A phone discovered before the lock is already stale; re-acquire from scratch.
+        // A device discovered before the lock is already stale; re-acquire from scratch.
         transitionTo(.absent)
     }
 
@@ -347,7 +348,8 @@ final class PresenceStateMachine: ObservableObject {
                 // `entry` answered "is the phone here?"; connecting needs the live handle,
                 // which is the most recently heard one, not necessarily the strongest.
                 guard let target = connectTarget() else { return }
-                EventLogger.shared.info(category: "State", "Discovered candidate phone nearby (\(String(format: "%.1f", averageRSSI)) dBm)")
+                let targetName = targetDeviceName(for: target.peripheral)
+                EventLogger.shared.info(category: "State", "Discovered candidate \(targetName) nearby (\(String(format: "%.1f", averageRSSI)) dBm)")
                 transitionTo(.candidateNear)
                 startHandshake(peripheral: target.peripheral)
             }
@@ -434,6 +436,12 @@ final class PresenceStateMachine: ObservableObject {
 
         return peripherals.values
             .filter { $0.lastSeenAt > cutoff && ($0.averageRSSI ?? -200) >= nearRSSIThreshold }
+    }
+
+    private func targetDeviceName(for peripheral: CBPeripheral) -> String {
+        let rawName = bleCentral.discoveredPeripherals[peripheral.identifier]?.name ?? peripheral.name ?? ""
+        let friendly = DeviceModelMapper.friendlyName(for: rawName)
+        return friendly.isEmpty ? "paired device" : friendly
     }
 
     private func startHandshake(peripheral: CBPeripheral) {

@@ -82,6 +82,10 @@ final class BLECentralManager: NSObject, ObservableObject {
     /// Options the current scan was started with, so `updateScanMode` can no-op when unchanged.
     private var activeAllowDuplicates: Bool?
 
+    /// Diagnostics for how long a fresh scan takes to hear its first advertisement.
+    private var scanStartedAt: Date?
+    private var loggedFirstSighting = false
+
     /// Tokens for the sleep/wake observers, removed in `deinit`.
     private var powerNotificationTokens: [NSObjectProtocol] = []
 
@@ -286,6 +290,8 @@ final class BLECentralManager: NSObject, ObservableObject {
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
             )
             self.log.notice("Started scanning for service \(BLEProtocol.serviceUUID.uuidString, privacy: .public)")
+            self.scanStartedAt = Date()
+            self.loggedFirstSighting = false
 
             DispatchQueue.main.async { [weak self] in
                 self?.isScanning = true
@@ -373,6 +379,24 @@ extension BLECentralManager: CBCentralManagerDelegate {
             ?? "Unknown device"
         let sampleRSSI = RSSI.intValue
         let now = Date()
+
+        // How long the radio took to hear anything at all, logged once per scan session.
+        //
+        // Measured across three locks, the gap between "Started scanning" and the state machine
+        // acting on a candidate was 1.3s, 8.2s and 11.9s, with the peripheral advertising
+        // continuously throughout and its RSSI (-67 dBm) far above the -85 threshold. That leaves
+        // two possibilities which no existing log can tell apart: the advertisements were not
+        // reaching us, or they were arriving and being filtered out downstream. This line is the
+        // difference between them — if it prints promptly, the delay is ours.
+        if !loggedFirstSighting {
+            loggedFirstSighting = true
+            let waited = scanStartedAt.map { now.timeIntervalSince($0) } ?? -1
+            log.notice("""
+                First advertisement after \(String(format: "%.2f", waited), privacy: .public)s \
+                from \(peripheral.identifier.uuidString, privacy: .public) \
+                (\(sampleRSSI, privacy: .public) dBm)
+                """)
+        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

@@ -118,7 +118,7 @@ final class StatusMenuController: NSObject {
                 }
             }
         } else {
-            menu.addItem(disabledItem(title: "No phone paired"))
+            menu.addItem(disabledItem(title: "No device paired"))
             menu.addItem(.separator())
 
             let peripherals = bleCentral.discoveredPeripherals.values
