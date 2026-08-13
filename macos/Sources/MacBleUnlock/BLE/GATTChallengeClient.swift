@@ -124,6 +124,16 @@ final class GATTChallengeClient: NSObject {
     /// When the phone first answered "waiting on the user", used to pace the re-reads.
     private var approvalPendingSince: Date?
 
+    /// Re-issues an approval read whose reply never came back.
+    ///
+    /// The poll chain is driven purely by `didUpdateValueFor`: each 0x80 schedules the next read.
+    /// A read that draws no callback at all — neither value nor error — therefore ends the chain
+    /// permanently and silently. Observed three times in one session: the Mac stopped reading
+    /// 2.5s and 6.9s in, the user tapped Approve 1.1s and 2.7s later, the phone logged
+    /// "approved by user" and signed nothing, because nobody ever asked again. Nothing was logged
+    /// on either side, since from each side's point of view it had done its part.
+    private var approvalReadWatchdog: DispatchWorkItem?
+
     /// Fires if `didConnect` never arrives. See `armConnectWatchdog`.
     private var connectWatchdog: DispatchWorkItem?
     private var connectAttempt = 0
@@ -154,6 +164,12 @@ final class GATTChallengeClient: NSObject {
 
     /// Re-read cadence once a prompt looks like it has been left unanswered.
     private static let approvalSlowPollInterval: TimeInterval = 1.5
+
+    /// How long past a scheduled read to wait before assuming its reply is not coming.
+    ///
+    /// Generous against the 250ms fast poll: a reply merely running late must not be raced, or
+    /// the Mac would issue a second read the phone is already answering.
+    private static let approvalReadWatchdogGrace: TimeInterval = 3
 
     init(bleCentral: BLECentralManager, pairingManager: PairingManager) {
         self.bleCentral = bleCentral
@@ -323,6 +339,32 @@ final class GATTChallengeClient: NSObject {
         return Self.approvalFastPollInterval
     }
 
+    /// Schedules a re-read for `delay` plus a grace period, in case the reply never arrives.
+    ///
+    /// Cancelled by the next callback, so in the normal case it never fires. The outer 60s
+    /// approval timeout still bounds the whole wait — this only stops the poll from dying early.
+    private func armApprovalReadWatchdog(
+        after delay: TimeInterval,
+        peripheral: CBPeripheral,
+        characteristic: CBCharacteristic
+    ) {
+        approvalReadWatchdog?.cancel()
+
+        let item = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.activePeripheral === peripheral,
+                  self.isApprovalPending else { return }
+
+            self.log.notice("Approval read drew no reply; re-issuing")
+            peripheral.readValue(for: characteristic)
+            // Rearm: a link that swallowed one reply can swallow the next, and giving up here
+            // would reintroduce exactly the silent stall this exists to prevent.
+            self.armApprovalReadWatchdog(after: delay, peripheral: peripheral, characteristic: characteristic)
+        }
+        approvalReadWatchdog = item
+        bleCentral.queue.asyncAfter(deadline: .now() + delay + Self.approvalReadWatchdogGrace, execute: item)
+    }
+
     private func finish(
         _ result: Result<Bool, GATTChallengeError>,
         for peripheral: CBPeripheral,
@@ -335,6 +377,8 @@ final class GATTChallengeClient: NSObject {
         timeoutWorkItem = nil
         connectWatchdog?.cancel()
         connectWatchdog = nil
+        approvalReadWatchdog?.cancel()
+        approvalReadWatchdog = nil
         connectAttempt = 0
         isRetryingConnect = false
 
@@ -481,6 +525,10 @@ extension GATTChallengeClient: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral === activePeripheral, characteristic.uuid == BLEProtocol.responseCharacteristicUUID else { return }
+
+        // The reply we were waiting on arrived, whatever it says. Any 0x80 below arms a fresh one.
+        approvalReadWatchdog?.cancel()
+        approvalReadWatchdog = nil
         if let error {
             let nsError = error as NSError
             let deviceName = targetDeviceName(for: peripheral)
@@ -506,6 +554,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
                     guard let self, self.activePeripheral === peripheral else { return }
                     peripheral.readValue(for: characteristic)
                 }
+                armApprovalReadWatchdog(after: delay, peripheral: peripheral, characteristic: characteristic)
                 return
             }
 
