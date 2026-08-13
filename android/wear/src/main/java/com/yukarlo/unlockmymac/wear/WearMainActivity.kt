@@ -13,7 +13,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,12 +32,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.wear.compose.foundation.lazy.AutoCenteringParams
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.CompactChip
 import androidx.wear.compose.material.ListHeader
@@ -99,13 +101,40 @@ private fun WearHome() {
 
     val listState = rememberScalingLazyListState()
 
+    val serviceEnabled = settings?.serviceEnabled == true
+    val requireApproval = settings?.requireApproval == true
+    val fastDiscovery = settings?.advertiseMode == AdvertiseMode.BALANCED
+
+    val statusText = remember(bluetoothOn, status) {
+        when {
+            !bluetoothOn -> context.getString(R.string.home_bluetooth_off)
+            status.advertising.name == "ADVERTISING" -> "Broadcasting"
+            status.connectedCentrals > 0 -> "Connected"
+            else -> status.advertising.name.lowercase()
+        }
+    }
+
+    val serviceDesc = remember(serviceEnabled) {
+        if (serviceEnabled) "Broadcast signal to unlock Mac" else "Disabled"
+    }
+    val approvalDesc = remember(requireApproval) {
+        if (requireApproval) "Require tap on watch" else "Auto-unlock without asking"
+    }
+    val discoveryDesc = remember(fastDiscovery) {
+        if (fastDiscovery) "Faster detection, uses more battery" else "Standard power mode"
+    }
+
     Scaffold(positionIndicator = { PositionIndicator(scalingLazyListState = listState) }) {
         ScalingLazyColumn(
             modifier = Modifier.fillMaxSize(),
             state = listState,
-            contentPadding = PaddingValues(top = 28.dp, bottom = 48.dp),
+            scalingParams = ScalingLazyColumnDefaults.scalingParams(
+                edgeScale = 1.0f,
+                edgeAlpha = 1.0f,
+            ),
+            autoCentering = AutoCenteringParams(itemIndex = 1),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             // Header / Title & Paired Mac Name
             item {
@@ -124,13 +153,6 @@ private fun WearHome() {
 
             // Status Indicator Subtitle
             item {
-                val statusText =
-                    when {
-                        !bluetoothOn -> context.getString(R.string.home_bluetooth_off)
-                        status.advertising.name == "ADVERTISING" -> "Broadcasting"
-                        status.connectedCentrals > 0 -> "Connected"
-                        else -> status.advertising.name.lowercase()
-                    }
                 Text(
                     text = statusText,
                     style = MaterialTheme.typography.caption2,
@@ -183,53 +205,50 @@ private fun WearHome() {
                 }
             }
 
-            // Settings Card Container matching screenshot
+            // Row 1: Discoverable by Mac
             item {
-                val serviceEnabled = settings?.serviceEnabled == true
-                val requireApproval = settings?.requireApproval == true
-                val fastDiscovery = settings?.advertiseMode == AdvertiseMode.BALANCED
+                WearSettingItem(
+                    title = context.getString(R.string.home_service_switch),
+                    description = serviceDesc,
+                    checked = serviceEnabled,
+                    onCheckedChange = { newValue ->
+                        scope.launch {
+                            container.settings.setServiceEnabled(newValue)
+                            if (newValue) BleUnlockService.start(context) else BleUnlockService.stop(context)
+                        }
+                    },
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
+                )
+            }
 
-                WearSettingCard {
-                    // Row 1: Discoverable by Mac
-                    WearSettingRow(
-                        title = context.getString(R.string.home_service_switch),
-                        description = if (serviceEnabled) "Broadcast signal to unlock Mac" else "Disabled",
-                        checked = serviceEnabled,
-                        onCheckedChange = { newValue ->
-                            scope.launch {
-                                container.settings.setServiceEnabled(newValue)
-                                if (newValue) BleUnlockService.start(context) else BleUnlockService.stop(context)
-                            }
-                        },
-                        showDividerBelow = true,
-                    )
+            // Row 2: Approve every request
+            item {
+                WearSettingItem(
+                    title = context.getString(R.string.home_require_approval),
+                    description = approvalDesc,
+                    checked = requireApproval,
+                    onCheckedChange = { newValue ->
+                        scope.launch { container.settings.setRequireApproval(newValue) }
+                    },
+                    shape = RoundedCornerShape(6.dp),
+                )
+            }
 
-                    // Row 2: Approve every request
-                    WearSettingRow(
-                        title = context.getString(R.string.home_require_approval),
-                        description = if (requireApproval) "Require tap on watch" else "Auto-unlock without asking",
-                        checked = requireApproval,
-                        onCheckedChange = { newValue ->
-                            scope.launch { container.settings.setRequireApproval(newValue) }
-                        },
-                        showDividerBelow = true,
-                    )
-
-                    // Row 3: Fast discovery mode
-                    WearSettingRow(
-                        title = context.getString(R.string.home_fast_discovery),
-                        description = if (fastDiscovery) "Faster detection, uses more battery" else "Standard power mode",
-                        checked = fastDiscovery,
-                        onCheckedChange = { newValue ->
-                            scope.launch {
-                                container.settings.setAdvertiseMode(
-                                    if (newValue) AdvertiseMode.BALANCED else AdvertiseMode.LOW_POWER,
-                                )
-                            }
-                        },
-                        showDividerBelow = false,
-                    )
-                }
+            // Row 3: Fast discovery mode
+            item {
+                WearSettingItem(
+                    title = context.getString(R.string.home_fast_discovery),
+                    description = discoveryDesc,
+                    checked = fastDiscovery,
+                    onCheckedChange = { newValue ->
+                        scope.launch {
+                            container.settings.setAdvertiseMode(
+                                if (newValue) AdvertiseMode.BALANCED else AdvertiseMode.LOW_POWER,
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp),
+                )
             }
 
             // Enrolment Card if not paired
@@ -286,37 +305,23 @@ private fun WearHome() {
 }
 
 @Composable
-private fun WearSettingCard(
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(26.dp))
-            .background(Color(0xFF242428)),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            content()
-        }
-    }
-}
-
-@Composable
-private fun WearSettingRow(
+private fun WearSettingItem(
     title: String,
     description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    showDividerBelow: Boolean = false,
+    shape: Shape = RoundedCornerShape(20.dp),
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color(0xFF242428))
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
         Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onCheckedChange(!checked) }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
@@ -348,7 +353,7 @@ private fun WearSettingRow(
 
             Box(
                 modifier = Modifier
-                    .height(30.dp)
+                    .height(28.dp)
                     .width(1.dp)
                     .background(Color(0x33FFFFFF)),
             )
@@ -356,16 +361,6 @@ private fun WearSettingRow(
             Switch(
                 checked = checked,
                 modifier = Modifier.padding(start = 10.dp),
-            )
-        }
-
-        if (showDividerBelow) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .padding(horizontal = 14.dp)
-                    .background(Color(0x22FFFFFF)),
             )
         }
     }
