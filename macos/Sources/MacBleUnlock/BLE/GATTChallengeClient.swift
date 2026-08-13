@@ -134,6 +134,9 @@ final class GATTChallengeClient: NSObject {
     /// on either side, since from each side's point of view it had done its part.
     private var approvalReadWatchdog: DispatchWorkItem?
 
+    /// Consecutive re-issued approval reads that drew no reply. Reset by any callback.
+    private var approvalReadRetries = 0
+
     /// Fires if `didConnect` never arrives. See `armConnectWatchdog`.
     private var connectWatchdog: DispatchWorkItem?
     private var connectAttempt = 0
@@ -170,6 +173,12 @@ final class GATTChallengeClient: NSObject {
     /// Generous against the 250ms fast poll: a reply merely running late must not be raced, or
     /// the Mac would issue a second read the phone is already answering.
     private static let approvalReadWatchdogGrace: TimeInterval = 3
+
+    /// How many unanswered re-reads before the connection itself is treated as the fault.
+    ///
+    /// Re-reading is worth doing once or twice — a single dropped reply is cheap to recover from.
+    /// Beyond that the link is not carrying ATT traffic and no number of further reads will help.
+    private static let maxApprovalReadRetries = 2
 
     init(bleCentral: BLECentralManager, pairingManager: PairingManager) {
         self.bleCentral = bleCentral
@@ -355,10 +364,36 @@ final class GATTChallengeClient: NSObject {
                   self.activePeripheral === peripheral,
                   self.isApprovalPending else { return }
 
-            self.log.notice("Approval read drew no reply; re-issuing")
+            self.approvalReadRetries += 1
+
+            // Past this point the connection is the fault, not the read.
+            //
+            // Measured 20:36: the phone held the ACL open the whole time — it only saw the link
+            // drop 15.6s after the Mac hung up, on the supervision timeout — yet four re-issued
+            // reads never reached its GATT server at all. It had the approval and signs on read,
+            // so a single delivered read would have finished the unlock. CoreBluetooth was
+            // accepting `readValue` and dropping it onto a live connection carrying no ATT
+            // traffic, and no amount of asking again fixes that. The user typed their password.
+            //
+            // `readFailed` is transport-level, so the caller takes the short backoff and
+            // re-challenges rather than treating this as a refusal. Reconnecting means a new
+            // challenge and a second prompt, which is worse than seamless and far better than a
+            // dead end.
+            guard self.approvalReadRetries <= Self.maxApprovalReadRetries else {
+                self.log.notice("Approval reads unanswered after \(Self.maxApprovalReadRetries, privacy: .public) retries; dropping the link")
+                EventLogger.shared.warning(
+                    category: "Unlock",
+                    "\(self.targetDeviceName(for: peripheral)) stopped answering — reconnecting and asking again"
+                )
+                self.finish(.failure(.readFailed(nil)), for: peripheral, disconnect: true)
+                return
+            }
+
+            self.log.notice("""
+                Approval read drew no reply; re-issuing \
+                (\(self.approvalReadRetries, privacy: .public) of \(Self.maxApprovalReadRetries, privacy: .public))
+                """)
             peripheral.readValue(for: characteristic)
-            // Rearm: a link that swallowed one reply can swallow the next, and giving up here
-            // would reintroduce exactly the silent stall this exists to prevent.
             self.armApprovalReadWatchdog(after: delay, peripheral: peripheral, characteristic: characteristic)
         }
         approvalReadWatchdog = item
@@ -379,6 +414,7 @@ final class GATTChallengeClient: NSObject {
         connectWatchdog = nil
         approvalReadWatchdog?.cancel()
         approvalReadWatchdog = nil
+        approvalReadRetries = 0
         connectAttempt = 0
         isRetryingConnect = false
 
@@ -529,6 +565,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
         // The reply we were waiting on arrived, whatever it says. Any 0x80 below arms a fresh one.
         approvalReadWatchdog?.cancel()
         approvalReadWatchdog = nil
+        approvalReadRetries = 0
         if let error {
             let nsError = error as NSError
             let deviceName = targetDeviceName(for: peripheral)
