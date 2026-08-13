@@ -416,8 +416,17 @@ final class PresenceStateMachine: ObservableObject {
         // 7.1s old and -59.6 dBm won over a replacement heard 16ms earlier at -76 dBm, and the Mac
         // spent 8.9s failing to reach an address that no longer existed before connecting to the
         // new one in 1.0s.
-        let certain = alive.filter(isCertainlyLive)
-        let preferred = certain.isEmpty ? alive : certain
+        // Never dial a handle we hung up on and have not heard from since — not even when it is
+        // the only thing on offer. Waiting costs an advertising interval; measured 18:17:46, this
+        // cost 12.5s: the display slept mid-approval, the peer rotated on the reconnect, and the
+        // Mac spent two attempts on the address it had just been disconnected from before hearing
+        // the replacement. Unlike the tier below, this one does decline to connect — a handle that
+        // has been silent since we hung up on it is not a connection we would have made, it is a
+        // connection we would have failed.
+        let reachable = alive.filter(\.heardSinceDisconnect)
+
+        let certain = reachable.filter(isCertainlyLive)
+        let preferred = certain.isEmpty ? reachable : certain
 
         if let strongest = preferred.max(by: { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }) {
             return strongest
@@ -443,7 +452,12 @@ final class PresenceStateMachine: ObservableObject {
         let cutoff = Date().addingTimeInterval(-Self.presenceFreshnessSeconds)
 
         if let id = authenticatedPeripheralId {
-            if let entry = peripherals[id], entry.lastSeenAt > cutoff, !isSupersededPin(entry, among: peripherals) {
+            // `heardSinceDisconnect` first: the pin is set by a successful handshake, and the
+            // disconnect that ends that handshake is exactly what rotates the peer's address.
+            if let entry = peripherals[id],
+               entry.lastSeenAt > cutoff,
+               entry.heardSinceDisconnect,
+               !isSupersededPin(entry, among: peripherals) {
                 return [entry]
             }
             // Address rotated: drop the pin so we re-acquire under the new identifier.

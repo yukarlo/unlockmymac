@@ -16,11 +16,28 @@ struct DiscoveredPeripheral: Equatable {
     var rssiSmoother: RSSISmoother
     var lastSeenAt: Date
 
+    /// When we last hung up on this handle, if we ever have.
+    var disconnectedAt: Date?
+
+    /// False while this handle has not advertised since we last disconnected from it.
+    ///
+    /// Android mints a new address whenever it restarts advertising, and it restarts on every
+    /// disconnect — so a handle that has been silent since we hung up on it is very likely an
+    /// address the peer has already abandoned. Dialling one costs the full watchdog budget to
+    /// learn nothing; waiting for the next advertisement costs an advertising interval.
+    var heardSinceDisconnect: Bool {
+        guard let disconnectedAt else { return true }
+        return lastSeenAt > disconnectedAt
+    }
+
     var averageRSSI: Double? { rssiSmoother.average }
     var isNear: Bool { rssiSmoother.hasFullWindow && rssiSmoother.isNear }
 
     static func == (lhs: DiscoveredPeripheral, rhs: DiscoveredPeripheral) -> Bool {
-        lhs.id == rhs.id && lhs.lastSeenAt == rhs.lastSeenAt && lhs.rssiSmoother == rhs.rssiSmoother
+        lhs.id == rhs.id
+            && lhs.lastSeenAt == rhs.lastSeenAt
+            && lhs.rssiSmoother == rhs.rssiSmoother
+            && lhs.disconnectedAt == rhs.disconnectedAt
     }
 }
 
@@ -427,6 +444,12 @@ extension BLECentralManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         log.notice("Disconnected from \(peripheral.identifier.uuidString, privacy: .public)")
+        // Stamped before the delegate runs: the delegate may immediately re-evaluate presence, and
+        // this handle must already be marked as one we have not heard from since hanging up.
+        let hungUpAt = Date()
+        DispatchQueue.main.async { [weak self] in
+            self?.discoveredPeripherals[peripheral.identifier]?.disconnectedAt = hungUpAt
+        }
         connectionDelegate?.bleCentral(self, didDisconnect: peripheral, error: error)
     }
 }
