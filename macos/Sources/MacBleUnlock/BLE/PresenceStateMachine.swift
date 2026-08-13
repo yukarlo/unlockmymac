@@ -405,7 +405,21 @@ final class PresenceStateMachine: ObservableObject {
     private func connectTarget() -> DiscoveredPeripheral? {
         let livenessCutoff = Date().addingTimeInterval(-Self.livenessWindowSeconds)
         let alive = candidates().filter { $0.lastSeenAt > livenessCutoff }
-        if let strongest = alive.max(by: { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }) {
+
+        // Choose among handles that are beyond doubt, and only fall back to the merely-alive when
+        // there are none — which is what the paragraph above always described, but not what the
+        // code did: the two tiers had collapsed into the single 8s window.
+        //
+        // Signal strength cannot arbitrate this on its own. An address keeps the average it earned
+        // while it was live, so a handle the peer rotated away from seconds ago still reads strong
+        // and beats its own fresher replacement. Measured 17:39:26 on the watch: the old handle at
+        // 7.1s old and -59.6 dBm won over a replacement heard 16ms earlier at -76 dBm, and the Mac
+        // spent 8.9s failing to reach an address that no longer existed before connecting to the
+        // new one in 1.0s.
+        let certain = alive.filter(isCertainlyLive)
+        let preferred = certain.isEmpty ? alive : certain
+
+        if let strongest = preferred.max(by: { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }) {
             return strongest
         }
         // No fallback to "least stale". Android mints a new address on every advertising
@@ -429,7 +443,9 @@ final class PresenceStateMachine: ObservableObject {
         let cutoff = Date().addingTimeInterval(-Self.presenceFreshnessSeconds)
 
         if let id = authenticatedPeripheralId {
-            if let entry = peripherals[id], entry.lastSeenAt > cutoff { return [entry] }
+            if let entry = peripherals[id], entry.lastSeenAt > cutoff, !isSupersededPin(entry, among: peripherals) {
+                return [entry]
+            }
             // Address rotated: drop the pin so we re-acquire under the new identifier.
             authenticatedPeripheralId = nil
         }
@@ -437,6 +453,44 @@ final class PresenceStateMachine: ObservableObject {
         return peripherals.values
             .filter { $0.lastSeenAt > cutoff && ($0.averageRSSI ?? -200) >= nearRSSIThreshold }
     }
+
+    /// Whether the pinned handle has gone quiet while some other handle is demonstrably live.
+    ///
+    /// The pin collapses the candidate set to one entry, which is right while that entry is the
+    /// device — but after a disconnect Android rotates its address, and the old handle can sit in
+    /// the table for seconds still carrying the strong averaged RSSI it earned while it was alive.
+    /// Being the only candidate, it wins by default and there is nothing to lose to.
+    ///
+    /// Measured 17:39:26 on the watch: the pinned handle was 7.1s old, its replacement had been
+    /// heard 16ms earlier, and the pin sent the Mac to the dead one for 8.9s.
+    private func isSupersededPin(
+        _ pinned: DiscoveredPeripheral,
+        among peripherals: [UUID: DiscoveredPeripheral]
+    ) -> Bool {
+        // A pin still advertising is the device; nothing supersedes it.
+        guard !isCertainlyLive(pinned) else { return false }
+
+        return peripherals.values.contains { other in
+            other.id != pinned.id
+                && isCertainlyLive(other)
+                && (other.averageRSSI ?? -200) >= nearRSSIThreshold
+        }
+    }
+
+    /// Heard recently enough that the handle is beyond doubt still being advertised.
+    ///
+    /// The observed median gap between advertisements is 0.29s, so a handle silent for this long
+    /// has missed several in a row.
+    private func isCertainlyLive(_ entry: DiscoveredPeripheral) -> Bool {
+        entry.lastSeenAt > Date().addingTimeInterval(-Self.certainlyLiveWindowSeconds)
+    }
+
+    /// How recently a handle must have advertised to count as beyond doubt.
+    ///
+    /// Deliberately far tighter than `livenessWindowSeconds`, which exists to decide whether a
+    /// handle is worth dialling *at all* when it is the only option. This one only ever chooses
+    /// between handles, so it can afford to insist on a genuinely current one.
+    private static let certainlyLiveWindowSeconds: TimeInterval = 2
 
     private func targetDeviceName(for peripheral: CBPeripheral) -> String {
         if let name = bleCentral.discoveredPeripherals[peripheral.identifier]?.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
