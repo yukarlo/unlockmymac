@@ -467,9 +467,16 @@ extension GATTChallengeClient: CBPeripheralDelegate {
     }
 
     private func targetDeviceName(for peripheral: CBPeripheral) -> String {
-        let rawName = bleCentral.discoveredPeripherals[peripheral.identifier]?.name ?? peripheral.name ?? ""
-        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "device" : trimmed
+        if let name = bleCentral.discoveredPeripherals[peripheral.identifier]?.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let name = peripheral.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let paired = pairingManager.pairedDevices.first(where: { $0.deviceId == peripheral.identifier.uuidString }) ?? pairingManager.pairedDevices.first {
+            return paired.name
+        }
+        return "paired device"
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
