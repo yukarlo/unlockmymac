@@ -26,8 +26,10 @@ import com.yukarlo.unlockmymac.data.ApprovalRequest
 import com.yukarlo.unlockmymac.data.Timeouts
 import com.yukarlo.unlockmymac.permissions.BlePermissions
 import com.yukarlo.unlockmymac.util.challengeTag
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Keeps the BLE peripheral alive while the app is backgrounded and the screen is off.
@@ -70,12 +72,12 @@ class BleUnlockService :
                 when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                     BluetoothAdapter.STATE_ON -> {
                         appContainer.eventLog.info("Bluetooth turned on")
-                        applyState()
+                        lifecycleScope.launch(Dispatchers.IO) { applyState() }
                     }
 
                     BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
                         appContainer.eventLog.warn("Bluetooth turned off; tearing down")
-                        teardownRadio()
+                        lifecycleScope.launch(Dispatchers.IO) { teardownRadio() }
                         appContainer.status.setAdvertising(AdvertisingState.BLUETOOTH_OFF)
                     }
                 }
@@ -114,7 +116,7 @@ class BleUnlockService :
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
 
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             deviceId = appContainer.pairing.requireDeviceId()
             // Generate the identity key eagerly so the first pairing read is not the first
             // time we touch the Keystore (key generation can take a second on some devices).
@@ -123,7 +125,7 @@ class BleUnlockService :
             applyState()
         }
 
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             appContainer.settings.settings.collect { current ->
                 settings = current
                 applyState()
@@ -133,7 +135,7 @@ class BleUnlockService :
         // Expired challenges are otherwise only pruned when something else calls into
         // ChallengeSessions. With a prompt sitting unanswered nothing does, so one survived
         // overnight and was "approved" 10.5 hours later against a Mac that had long gone.
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             while (true) {
                 delay(SESSION_SWEEP_INTERVAL_MS)
                 if (appContainer.sessions.sweepExpired()) {
@@ -143,7 +145,7 @@ class BleUnlockService :
             }
         }
 
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             appContainer.pairing.pairedMac.collect { paired ->
                 pairedMacInstallationId = paired?.installationId
                 pairedMacName = paired?.name
@@ -189,7 +191,7 @@ class BleUnlockService :
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(bluetoothStateReceiver) }
-        teardownRadio()
+        kotlinx.coroutines.runBlocking(Dispatchers.IO) { teardownRadio() }
         appContainer.status.setServiceRunning(false)
         container.notifier.cancelApproval(this)
 
@@ -294,38 +296,40 @@ class BleUnlockService :
     }
 
     /** Brings the radio in line with the current settings. Idempotent, safe to spam. */
-    private fun applyState() {
-        val current = settings ?: return
-        if (deviceId.isEmpty()) return
+    private suspend fun applyState() =
+        withContext(Dispatchers.IO) {
+            val current = settings ?: return@withContext
+            if (deviceId.isEmpty()) return@withContext
 
-        if (!current.shouldAdvertise) {
-            teardownRadio()
+            if (!current.shouldAdvertise) {
+                teardownRadio()
+                updateNotification(
+                    if (current.paused) {
+                        getString(R.string.notification_paused)
+                    } else {
+                        getString(R.string.notification_disabled)
+                    },
+                )
+                // Leaving the service alive while paused keeps resuming instant; the user stops it
+                // entirely from the Home switch.
+                return@withContext
+            }
+
+            if (!gattServer.isOpen && !gattServer.open()) {
+                updateNotification(getString(R.string.notification_error))
+                return@withContext
+            }
+            advertiser.start(current.advertiseMode)
             updateNotification(
-                if (current.paused) {
-                    getString(R.string.notification_paused)
-                } else {
-                    getString(R.string.notification_disabled)
-                },
+                pairedMacName ?: getString(R.string.notification_active_unpaired),
             )
-            // Leaving the service alive while paused keeps resuming instant; the user stops it
-            // entirely from the Home switch.
-            return
         }
 
-        if (!gattServer.isOpen && !gattServer.open()) {
-            updateNotification(getString(R.string.notification_error))
-            return
+    private suspend fun teardownRadio() =
+        withContext(Dispatchers.IO) {
+            advertiser.stop()
+            gattServer.close()
         }
-        advertiser.start(current.advertiseMode)
-        updateNotification(
-            pairedMacName ?: getString(R.string.notification_active_unpaired),
-        )
-    }
-
-    private fun teardownRadio() {
-        advertiser.stop()
-        gattServer.close()
-    }
 
     /**
      * Full manual reset of the BLE stack on this side.
@@ -339,20 +343,22 @@ class BleUnlockService :
      * stale state here, and the new advertising set gets a fresh address.
      */
     private fun forceReset() {
-        appContainer.eventLog.warn("Manual reset requested — restarting BLE from scratch")
+        lifecycleScope.launch(Dispatchers.IO) {
+            appContainer.eventLog.warn("Manual reset requested — restarting BLE from scratch")
 
-        val dropped = gattServer.disconnectAllCentrals()
-        if (dropped > 0) {
-            appContainer.eventLog.info("Dropped $dropped connected central(s)")
+            val dropped = gattServer.disconnectAllCentrals()
+            if (dropped > 0) {
+                appContainer.eventLog.info("Dropped $dropped connected central(s)")
+            }
+
+            appContainer.sessions.clear()
+            onApprovalNoLongerValid()
+
+            teardownRadio()
+            applyState()
+
+            appContainer.eventLog.info("Reset complete — advertising restarted")
         }
-
-        appContainer.sessions.clear()
-        onApprovalNoLongerValid()
-
-        teardownRadio()
-        applyState()
-
-        appContainer.eventLog.info("Reset complete — advertising restarted")
     }
 
     private fun startForegroundWithStatus(text: String): Boolean =

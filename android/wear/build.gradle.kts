@@ -25,6 +25,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Debug-signed so a release build can be sideloaded for measurement. Compose in a
+            // debug build carries composition-tracking instrumentation that a watch CPU feels
+            // acutely, so a like-for-like comparison needs an installable release APK.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

@@ -19,6 +19,10 @@ import com.yukarlo.unlockmymac.pairing.EnrolmentCoordinator
 import com.yukarlo.unlockmymac.pairing.PairingCoordinator
 import com.yukarlo.unlockmymac.permissions.BlePermissions
 import com.yukarlo.unlockmymac.util.challengeTag
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.Collections
 
 /** Everything the GATT server needs to know about app state at the moment of a request. */
@@ -93,71 +97,92 @@ class GattServerController(
 
     val isOpen: Boolean get() = gattServer != null
 
+    /**
+     * Serialises open and close.
+     *
+     * `open()` became suspending so the `openGattServer` IPC would leave the main thread, but
+     * `applyState()` is launched from four separate coroutines — initial setup, the settings
+     * collector, the pairing collector and the Bluetooth receiver — and two of them could pass
+     * the `gattServer != null` check before either assigned. That registered a *second* GATT
+     * server on the same service: the Mac's challenge write landed on one, so a prompt appeared
+     * and was approved, while the response read went to the other, which held no session and
+     * never answered. Every unlock timed out with the approval already given.
+     *
+     * Observed as two `serverIf` values from a single pid where earlier builds had one.
+     */
+    private val lifecycleMutex = Mutex()
+
     @SuppressLint("MissingPermission") // Callers check BlePermissions.hasBleAccess first.
-    fun open(): Boolean {
-        if (gattServer != null) return true
-        if (!BlePermissions.hasBleAccess(context)) {
-            eventLog.warn("Cannot open GATT server: Bluetooth permissions not granted")
-            return false
-        }
-        val manager = context.getSystemService(BluetoothManager::class.java) ?: return false
-        val server = manager.openGattServer(context, callback)
-        if (server == null) {
-            eventLog.error("openGattServer returned null")
-            return false
-        }
-        gattServer = server
+    suspend fun open(): Boolean =
+        lifecycleMutex.withLock {
+            withContext(Dispatchers.IO) {
+                if (gattServer != null) return@withContext true
+                if (!BlePermissions.hasBleAccess(context)) {
+                    eventLog.warn("Cannot open GATT server: Bluetooth permissions not granted")
+                    return@withContext false
+                }
+                val manager = context.getSystemService(BluetoothManager::class.java) ?: return@withContext false
+                val server = manager.openGattServer(context, callback)
+                if (server == null) {
+                    eventLog.error("openGattServer returned null")
+                    return@withContext false
+                }
+                gattServer = server
 
-        val service = BluetoothGattService(BleUuids.SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY)
-        service.addCharacteristic(
-            BluetoothGattCharacteristic(
-                BleUuids.CHALLENGE,
-                BluetoothGattCharacteristic.PROPERTY_WRITE,
-                BluetoothGattCharacteristic.PERMISSION_WRITE,
-            ),
-        )
-        service.addCharacteristic(
-            BluetoothGattCharacteristic(
-                BleUuids.RESPONSE,
-                BluetoothGattCharacteristic.PROPERTY_READ,
-                BluetoothGattCharacteristic.PERMISSION_READ,
-            ),
-        )
-        service.addCharacteristic(
-            BluetoothGattCharacteristic(
-                BleUuids.PAIRING,
-                BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_READ,
-                BluetoothGattCharacteristic.PERMISSION_WRITE or BluetoothGattCharacteristic.PERMISSION_READ,
-            ),
-        )
-        service.addCharacteristic(
-            BluetoothGattCharacteristic(
-                BleUuids.ENROLMENT,
-                BluetoothGattCharacteristic.PROPERTY_READ,
-                BluetoothGattCharacteristic.PERMISSION_READ,
-            ),
-        )
+                val service = BluetoothGattService(BleUuids.SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY)
+                service.addCharacteristic(
+                    BluetoothGattCharacteristic(
+                        BleUuids.CHALLENGE,
+                        BluetoothGattCharacteristic.PROPERTY_WRITE,
+                        BluetoothGattCharacteristic.PERMISSION_WRITE,
+                    ),
+                )
+                service.addCharacteristic(
+                    BluetoothGattCharacteristic(
+                        BleUuids.RESPONSE,
+                        BluetoothGattCharacteristic.PROPERTY_READ,
+                        BluetoothGattCharacteristic.PERMISSION_READ,
+                    ),
+                )
+                service.addCharacteristic(
+                    BluetoothGattCharacteristic(
+                        BleUuids.PAIRING,
+                        BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_READ,
+                        BluetoothGattCharacteristic.PERMISSION_WRITE or BluetoothGattCharacteristic.PERMISSION_READ,
+                    ),
+                )
+                service.addCharacteristic(
+                    BluetoothGattCharacteristic(
+                        BleUuids.ENROLMENT,
+                        BluetoothGattCharacteristic.PROPERTY_READ,
+                        BluetoothGattCharacteristic.PERMISSION_READ,
+                    ),
+                )
 
-        if (!server.addService(service)) {
-            eventLog.error("Could not add GATT service")
-            close()
-            return false
+                if (!server.addService(service)) {
+                    eventLog.error("Could not add GATT service")
+                    close()
+                    return@withContext false
+                }
+                eventLog.info("GATT server open")
+                true
+            }
         }
-        eventLog.info("GATT server open")
-        return true
-    }
 
     @SuppressLint("MissingPermission") // Closing is safe even if permission was revoked.
-    fun close() {
-        val server = gattServer ?: return
-        gattServer = null
-        stagedPairingResponse = null
-        connected.clear()
-        sessions.clear()
-        status.setConnectedCentrals(0)
-        runCatching { server.close() }.onFailure { Log.w(TAG, "GATT server close threw", it) }
-        eventLog.info("GATT server closed")
-    }
+    suspend fun close() =
+        lifecycleMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val server = gattServer ?: return@withContext
+                gattServer = null
+                stagedPairingResponse = null
+                connected.clear()
+                sessions.clear()
+                status.setConnectedCentrals(0)
+                runCatching { server.close() }.onFailure { Log.w(TAG, "GATT server close threw", it) }
+                eventLog.info("GATT server closed")
+            }
+        }
 
     /**
      * Hangs up on every connected central.
