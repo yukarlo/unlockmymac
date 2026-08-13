@@ -40,6 +40,7 @@
     <string name="home_reset_hint">Use this if your Mac stops unlocking even though everything looks fine. Disconnects the Mac and restarts advertising so both sides start over.</string>
     <string name="home_reset_done">Reset done — disconnected and restarted broadcasting.</string>
     <string name="home_denied_countdown">You denied the last unlock. Your Mac won\'t ask again for %1$d:%2$02d — this is deliberate, not a fault.</string>
+    <string name="home_notification_settings_button">Notification alerts</string>
     <string name="home_diagnostics_button">Diagnostics</string>
     <string name="home_permissions_body">UnlockMyMac needs Nearby devices permission to broadcast as a Bluetooth peripheral. It never scans for other devices and never uses your location.</string>
     <string name="home_permissions_grant">Grant permission</string>

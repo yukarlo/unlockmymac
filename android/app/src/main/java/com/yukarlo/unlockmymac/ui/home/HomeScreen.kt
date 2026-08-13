@@ -1,5 +1,7 @@
 package com.yukarlo.unlockmymac.ui.home
 
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
@@ -60,6 +63,7 @@ import com.yukarlo.unlockmymac.data.AdvertiseMode
 import com.yukarlo.unlockmymac.data.AdvertisingState
 import com.yukarlo.unlockmymac.data.AuthOutcome
 import com.yukarlo.unlockmymac.permissions.BlePermissions
+import com.yukarlo.unlockmymac.service.UnlockNotifications
 import com.yukarlo.unlockmymac.ui.components.HeroStatusCard
 import com.yukarlo.unlockmymac.ui.components.SectionCard
 import com.yukarlo.unlockmymac.ui.components.SettingRow
@@ -125,7 +129,7 @@ fun HomeScreen(
                                         } else {
                                             R.string.home_repair_button
                                         },
-                                    )
+                                    ),
                                 )
                             },
                             leadingIcon = {
@@ -137,6 +141,24 @@ fun HomeScreen(
                             onClick = {
                                 showMenu = false
                                 onPair()
+                            },
+                        )
+                        // Opens Android's own settings for the approval channel rather than
+                        // offering switches here. Vibration and lights belong to the channel, and
+                        // since API 26 a channel's settings are the user's — an app cannot change
+                        // them after creation, and `setLights` has been ignored since the same
+                        // release. In-app toggles would either do nothing or fight the channel.
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.home_notification_settings_button)) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.NotificationsActive,
+                                    contentDescription = null,
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                openApprovalChannelSettings(context)
                             },
                         )
                         DropdownMenuItem(
@@ -462,3 +484,34 @@ private fun describeOutcome(outcome: AuthOutcome): String =
 private fun appSettingsIntent(packageName: String): Intent =
     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+/**
+ * Opens Android's settings for the approval notification channel.
+ *
+ * Vibration and lights are channel properties, and from API 26 they belong to the user: an app
+ * cannot change them once the channel exists, and `setLights` is ignored outright. Mirroring them
+ * as in-app switches would produce one control that does nothing and another that fights the
+ * channel's own vibration, so this hands over to the screen where they actually work.
+ *
+ * Falls back through app notification settings to app details, since the per-channel screen is not
+ * guaranteed to resolve on every device.
+ */
+private fun openApprovalChannelSettings(context: Context) {
+    val candidates =
+        listOf(
+            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(Settings.EXTRA_CHANNEL_ID, UnlockNotifications.APPROVAL_CHANNEL_ID),
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+            appSettingsIntent(context.packageName),
+        )
+    for (intent in candidates) {
+        try {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        } catch (_: ActivityNotFoundException) {
+            // Try the next, less specific, screen.
+        }
+    }
+}
