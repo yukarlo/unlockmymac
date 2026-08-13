@@ -239,6 +239,12 @@ final class AutoUnlockController: ObservableObject {
     /// Hard ceiling on keystroke sequences per lock session.
     private static let maxAttemptsPerLockSession = 3
 
+    /// Backspaces sent before typing, to empty a field Select All may not have selected.
+    ///
+    /// Generous on purpose: the cost is linear and small, and the failure it prevents costs the
+    /// user a manual password entry.
+    private static let clearingBackspaces = 40
+
     /// Gap between synthesised keystrokes (8ms for fast typing without dropping keys).
     private static let keystrokeIntervalMicros: UInt32 = 8_000
 
@@ -355,10 +361,24 @@ final class AutoUnlockController: ObservableObject {
                 return
             }
 
-            // Step 2: Clear anything in the password field (Cmd+A with physical Cmd key, then Delete)
+            // Step 2: Empty the password field.
+            //
+            // Cmd+A then Delete is the tidy way, but Select All is not honoured by every secure
+            // input field, and if it is ignored a single Delete removes one character rather
+            // than the lot. Whatever the user pressed to wake the Mac lands in this field first
+            // — a letter, or a fistful of them if they mashed the keyboard — and the password
+            // is then appended to it and rejected.
+            //
+            // So follow it with enough backspaces to empty the field outright. It costs about a
+            // third of a second and removes a whole class of "typed but rejected" failures.
             self.postVirtualKey(Self.keyA, flags: .maskCommand)
             usleep(30_000)
             self.postVirtualKey(Self.keyDelete)
+            usleep(30_000)
+            for _ in 0..<Self.clearingBackspaces {
+                self.postVirtualKey(Self.keyDelete)
+                usleep(Self.keystrokeIntervalMicros)
+            }
             usleep(40_000)
 
             // Step 3: Type password characters using physical CGKeyCodes & explicit Shift modifier events

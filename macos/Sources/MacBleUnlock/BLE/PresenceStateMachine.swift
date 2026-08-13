@@ -401,19 +401,25 @@ final class PresenceStateMachine: ObservableObject {
     /// the observed median advertisement gap is 0.29 s — take the strongest. Fall back to plain
     /// recency when nothing is that fresh, which is the old behaviour and the safe one.
     private func connectTarget() -> DiscoveredPeripheral? {
-        let fresh = candidates()
         let livenessCutoff = Date().addingTimeInterval(-Self.livenessWindowSeconds)
-        let certainlyAlive = fresh.filter { $0.lastSeenAt > livenessCutoff }
-        if let strongest = certainlyAlive.max(by: {
-            ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200)
-        }) {
+        let alive = candidates().filter { $0.lastSeenAt > livenessCutoff }
+        if let strongest = alive.max(by: { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }) {
             return strongest
         }
-        return fresh.max { $0.lastSeenAt < $1.lastSeenAt }
+        // No fallback to "least stale". Android mints a new address on every advertising
+        // restart, so an entry last heard 15 s ago is a dead address, and dialling it costs the
+        // full 9 s watchdog budget to learn nothing. Measured: handles 1.7 s old connect; ones
+        // 14.6 s and 18.3 s old never reached the watch at all. Waiting for the next
+        // advertisement is cheaper than talking to a corpse.
+        return nil
     }
 
-    /// How recently a handle must have been heard to be treated as certainly still alive.
-    private static let livenessWindowSeconds: TimeInterval = 2
+    /// How recently a handle must have been heard for it to be worth dialling.
+    ///
+    /// Above the worst observed gap between advertisements (5.73 s) so ordinary bursty reception
+    /// is not mistaken for a dead address, and well below the 14 s+ ages that were measured
+    /// never connecting.
+    private static let livenessWindowSeconds: TimeInterval = 8
 
     /// Entries recent enough and strong enough to be this phone, honouring an existing pin.
     private func candidates() -> [DiscoveredPeripheral] {
@@ -551,27 +557,32 @@ final class PresenceStateMachine: ObservableObject {
             if let last = self.lastHeartbeatAuthDate, Date().timeIntervalSince(last) < interval {
                 return
             }
+            guard let entry = self.connectTarget() else {
+                // Nothing fresh enough to dial. Previously the beat was consumed before this
+                // check and nothing was logged, so a retry could silently never happen — which
+                // is how a failed keystroke sequence stayed at "attempt 1 of 3" for 36 seconds.
+                self.log.notice("Heartbeat found no live handle; will look again on the next beat")
+                return
+            }
             self.lastHeartbeatAuthDate = Date()
-            if let entry = self.connectTarget() {
-                self.gattClient.authenticate(
-                    peripheral: entry.peripheral,
-                    macInstallationId: self.pairingManager.macInstallationId
-                ) { [weak self] result in
-                    guard let self else { return }
-                    switch result {
-                    case .success(let verified):
-                        // Re-checked rather than assumed: the display can sleep during the
-                        // round trip, and typing a password into a Mac that just went dark
-                        // would leak keystrokes into whatever has focus when it wakes.
-                        if verified,
-                           self.shouldChallengeNow,
-                           self.autoUnlockController.hasAttemptsRemaining {
-                            EventLogger.shared.info(category: "AutoUnlock", "Heartbeat verified phone presence while screen locked. Unlocking...")
-                            self.autoUnlockController.attemptAutoUnlock()
-                        }
-                    case .failure(let err):
-                        EventLogger.shared.warning(category: "Heartbeat", "Heartbeat failed: \(err.description)")
+            self.gattClient.authenticate(
+                peripheral: entry.peripheral,
+                macInstallationId: self.pairingManager.macInstallationId
+            ) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let verified):
+                    // Re-checked rather than assumed: the display can sleep during the
+                    // round trip, and typing a password into a Mac that just went dark
+                    // would leak keystrokes into whatever has focus when it wakes.
+                    if verified,
+                       self.shouldChallengeNow,
+                       self.autoUnlockController.hasAttemptsRemaining {
+                        EventLogger.shared.info(category: "AutoUnlock", "Heartbeat verified phone presence while screen locked. Unlocking...")
+                        self.autoUnlockController.attemptAutoUnlock()
                     }
+                case .failure(let err):
+                    EventLogger.shared.warning(category: "Heartbeat", "Heartbeat failed: \(err.description)")
                 }
             }
         }
