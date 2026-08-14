@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -70,8 +71,11 @@ class EventLog(
         message: String,
     ) {
         val event = LogEvent(System.currentTimeMillis(), level, message)
-        val updated = (_events.value + event).takeLast(CAPACITY)
-        _events.value = updated
+        // Atomic read-modify-write. Callers include GATT server callbacks, the BLE advertiser and
+        // several coroutines on Dispatchers.IO, so a plain `_events.value = _events.value + event`
+        // silently dropped entries whenever two of them interleaved — and this file is the primary
+        // record used to debug the BLE behaviour, so a missing line is a missing measurement.
+        val updated = _events.updateAndGet { (it + event).takeLast(CAPACITY) }
         scope.launch { persist(updated) }
     }
 
