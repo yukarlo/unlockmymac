@@ -6,6 +6,7 @@ import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.Wearable
 import com.yukarlo.unlockmymac.container
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Base64
@@ -46,11 +47,19 @@ object WearEnrolmentSender {
                 val identity = container.signer.identity()
                 val deviceId = container.pairing.requireDeviceId()
 
+                // The name the user chose, not the raw model. This is what the Mac stores and shows in
+                // its paired-devices list, so hardcoding Build.MODEL meant renaming the watch had no
+                // effect there. `deviceName` already falls back to Build.MODEL when unset.
+                val deviceName =
+                    container.settings.settings
+                        .first()
+                        .deviceName
+
                 val payload =
                     JSONObject()
                         .put("v", 1)
                         .put("deviceId", deviceId)
-                        .put("name", android.os.Build.MODEL ?: "Watch")
+                        .put("name", deviceName)
                         .put("publicKey", Base64.getEncoder().encodeToString(identity.publicKeyDer))
                         .toString()
                         .toByteArray(Charsets.UTF_8)
