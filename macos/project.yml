@@ -1,0 +1,29 @@
+name: MacBleUnlock
+options:
+  bundleIdPrefix: com.karloyu.macbleunlock
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "13.0"
+targets:
+  MacBleUnlock:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/MacBleUnlock
+        excludes:
+          - "Resources/Info.plist"
+    settings:
+      base:
+        PRODUCT_NAME: MacBleUnlock
+        PRODUCT_BUNDLE_IDENTIFIER: com.karloyu.macbleunlock
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Sources/MacBleUnlock/Resources/Info.plist
+    scheme:
+      testTargets: []
+      gatherCoverageData: false
