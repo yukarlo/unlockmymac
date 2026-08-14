@@ -5,6 +5,7 @@ import android.os.SystemClock
 import com.yukarlo.unlockmymac.ble.ChallengeSessions
 import com.yukarlo.unlockmymac.ble.ElapsedClock
 import com.yukarlo.unlockmymac.crypto.KeystoreSigner
+import com.yukarlo.unlockmymac.data.AdvertiseMode
 import com.yukarlo.unlockmymac.data.BleStatusRepository
 import com.yukarlo.unlockmymac.data.EventLog
 import com.yukarlo.unlockmymac.data.PairingRepository
@@ -21,10 +22,12 @@ class AppContainer(
     context: Context,
     /** How this form factor draws the service's notifications. See [UnlockNotifier]. */
     val notifier: UnlockNotifier,
+    /** How fast this form factor advertises before the user has chosen. See [AdvertiseMode]. */
+    defaultAdvertiseMode: AdvertiseMode = AdvertiseMode.LOW_POWER,
 ) {
     private val appContext = context.applicationContext
 
-    val settings = SettingsRepository(appContext)
+    val settings = SettingsRepository(appContext, defaultAdvertiseMode)
     val pairing = PairingRepository(appContext)
     val status = BleStatusRepository()
     val eventLog = EventLog(appContext)

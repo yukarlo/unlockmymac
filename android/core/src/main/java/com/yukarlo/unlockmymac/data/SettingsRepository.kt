@@ -13,10 +13,18 @@ import kotlinx.coroutines.flow.map
 val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "unlock_settings")
 
 enum class AdvertiseMode {
-    /** Default. Longest discovery latency, lowest battery cost. */
+    /** Advertises about once a second. Longest discovery latency, lowest battery cost. */
     LOW_POWER,
 
-    /** Opt-in from settings if the Mac is slow to find the phone. */
+    /**
+     * Advertises about every 250 ms.
+     *
+     * The default on the watch, and worth the battery there. A central has to catch an advertising
+     * event to open a connection, so the interval is a floor on how long establishing one takes:
+     * measured against this watch, connects took ~3.0s on [LOW_POWER] against 0.67s on the phone at
+     * this interval, which is over the Mac's connect watchdog. The Mac then cancels a connect that
+     * was about to land, and both of its attempts die the same way.
+     */
     BALANCED,
 }
 
@@ -33,6 +41,15 @@ class AppSettings(
 
 class SettingsRepository(
     private val context: Context,
+    /**
+     * What [AppSettings.advertiseMode] reads as before the user has ever chosen.
+     *
+     * Per form factor rather than global: the watch needs [AdvertiseMode.BALANCED] to be reachable
+     * at all (see the KDoc there), while the phone is found quickly either way and keeps the
+     * cheaper default. Threaded in from [com.yukarlo.unlockmymac.AppContainer] so this class stays
+     * unaware of which app it is serving.
+     */
+    private val defaultAdvertiseMode: AdvertiseMode = AdvertiseMode.LOW_POWER,
 ) {
     val settings: Flow<AppSettings> =
         context.settingsDataStore.data.map { prefs ->
@@ -43,7 +60,8 @@ class SettingsRepository(
                 advertiseMode =
                     when (prefs[ADVERTISE_MODE]) {
                         AdvertiseMode.BALANCED.name -> AdvertiseMode.BALANCED
-                        else -> AdvertiseMode.LOW_POWER
+                        AdvertiseMode.LOW_POWER.name -> AdvertiseMode.LOW_POWER
+                        else -> defaultAdvertiseMode
                     },
                 deviceName = prefs[DEVICE_NAME] ?: android.os.Build.MODEL ?: "Android",
             )
