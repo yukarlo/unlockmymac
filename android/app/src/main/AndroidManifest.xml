@@ -54,6 +54,19 @@
                 android:exported="false"
                 android:foregroundServiceType="connectedDevice"/>
 
+        <!-- exported=true and the BIND_QUICK_SETTINGS_TILE permission are both required by the
+             platform: System UI binds this, and the permission is what restricts binding to it. -->
+        <service
+                android:name=".service.UnlockTileService"
+                android:exported="true"
+                android:icon="@drawable/ic_tile_discoverable"
+                android:label="@string/tile_label"
+                android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE"/>
+            </intent-filter>
+        </service>
+
         <service
                 android:name="com.yukarlo.unlockmymac.service.MirroredApprovalReceiver"
                 android:exported="true">

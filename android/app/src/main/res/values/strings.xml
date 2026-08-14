@@ -13,6 +13,14 @@
     <string name="action_approve">Approve</string>
     <string name="action_deny">Deny</string>
 
+    <!-- Quick Settings tile -->
+    <string name="tile_label">Mac unlock</string>
+    <string name="tile_state_on">Discoverable</string>
+    <string name="tile_state_paused">Paused</string>
+    <string name="tile_state_off">Off</string>
+    <string name="tile_state_bluetooth_off">Bluetooth off</string>
+    <string name="tile_state_no_permission">Tap to grant permissions</string>
+
     <!-- Home -->
     <string name="home_title">Mac unlock</string>
     <string name="home_service_switch">Discoverable by Mac</string>
