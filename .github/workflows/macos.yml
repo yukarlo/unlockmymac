@@ -51,9 +51,11 @@ jobs:
       # workflow and never tested anywhere; every build verified locally omits it, and destination
       # resolution on a runner is a common way for this to fail. Omitting it builds for the host,
       # which is what is wanted.
-      - name: Build
+      # `test` rather than `build`: it builds the app target as a dependency, so this is strictly more
+      # coverage for the same runner minutes.
+      - name: Build and test
         run: |
-          xcodebuild build \
+          xcodebuild test \
             -scheme MacBleUnlock \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
