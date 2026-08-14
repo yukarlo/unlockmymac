@@ -1,15 +1,17 @@
 <!--
-  Quick Settings tile icon, not-discoverable state: the padlock on its own.
+  Quick Settings tile icon, not-discoverable state: the same shield and padlock, drawn as outlines.
 
-  Identical lock geometry to ic_tile_discoverable; the only difference is the missing signal bars.
-  Nothing is broadcasting, so nothing reaches out of the lock.
+  Shares ic_tile_discoverable's shield path verbatim and places the lock in the same box (y=6.1..14.7,
+  centred on 10.4 — see the note there on why that is above the shield's midpoint), so the two
+  states differ only in weight — solid when discoverable, hollow when not. Stroked rather than filled,
+  so no cutout is needed: the shield interior is simply empty.
 
-  The lock does still appear to shift slightly between the two states, because One UI centres the
-  glyph on its ink rather than on the 24dp viewport, and dropping the bars changes where that centre
-  falls. Harmless, and not worth padding the viewport to hide.
+  The lock is the one thing not reused as a single path. The filled state uses one closed silhouette
+  because evenOdd needs it; stroking that silhouette would draw a line across the join between body
+  and shackle, so here the body and the shackle arc are separate strokes.
 
-  Used for every non-broadcasting case — paused, switched off, Bluetooth off, permission missing.
-  Those are distinguished in the tile subtitle rather than by four near-identical glyphs.
+  Stroke widths are 1.4-1.6 in a 24-unit viewport. Below about 1.4 the outline starts to disappear
+  once Quick Settings scales the glyph down.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
         android:width="24dp"
@@ -17,20 +19,30 @@
         android:viewportWidth="24"
         android:viewportHeight="24"
         android:tint="?attr/colorControlNormal">
+    <!-- Shield. Identical geometry to the filled state. -->
+    <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="@android:color/white"
+            android:strokeWidth="1.6"
+            android:strokeLineJoin="round"
+            android:strokeLineCap="round"
+            android:pathData="M5.2,3.2H18.8A1.2,1.2 0 0 1 20,4.4V11.6C20,16.2 16.6,19.9 12,21.2 7.4,19.9 4,16.2 4,11.6V4.4A1.2,1.2 0 0 1 5.2,3.2Z"/>
+    <!-- Padlock body. -->
+    <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="@android:color/white"
+            android:strokeWidth="1.5"
+            android:strokeLineJoin="round"
+            android:pathData="M9,9.9h6c0.5,0 0.9,0.4 0.9,0.9v3c0,0.5 -0.4,0.9 -0.9,0.9H9c-0.5,0 -0.9,-0.4 -0.9,-0.9v-3c0,-0.5 0.4,-0.9 0.9,-0.9z"/>
+    <!-- Shackle, an open arc so the hoop reads open rather than as a filled block. -->
+    <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="@android:color/white"
+            android:strokeWidth="1.4"
+            android:strokeLineCap="round"
+            android:pathData="M10.3,9.9V8.3C10.3,7.36 11.06,6.6 12,6.6 12.94,6.6 13.7,7.36 13.7,8.3v1.6"/>
+    <!-- Keyhole kept solid: an outlined dot this small renders as a smudge. -->
     <path
             android:fillColor="@android:color/white"
-            android:fillType="evenOdd"
-            android:pathData="M4,10h6c1.1,0 2,0.9 2,2v6c0,1.1 -0.9,2 -2,2H4c-1.1,0 -2,-0.9 -2,-2v-6C2,10.9 2.9,10 4,10zM7,13.5a1.4,1.4 0 1 0 0,2.8 1.4,1.4 0 1 0 0,-2.8z"/>
-    <path
-            android:fillColor="@android:color/white"
-            android:pathData="M4.2,10V8.2c0,-1.55 1.25,-2.8 2.8,-2.8s2.8,1.25 2.8,2.8V10H8V8.2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1V10H4.2z"/>
-    <!-- No bars, and deliberately nothing in their place.
-         Two alternatives were tried on device and both read worse. A cross looked like "delete" and
-         floated away from the lock. A slash needs something to strike through, and it cannot cross the
-         lock itself: Quick Settings tints the whole glyph one flat colour, so a slash over the filled
-         body simply vanishes into it — the notch that makes the platform's own struck-through icons
-         work is a cut-out, which a single-colour fill cannot express here.
-         Absence of the bars is the clearest available signal, and Quick Settings is already colouring
-         the tile by state on top of it. -->
-
+            android:pathData="M12,11.25a0.95,0.95 0 1 0 0,1.9 0.95,0.95 0 1 0 0,-1.9z"/>
 </vector>

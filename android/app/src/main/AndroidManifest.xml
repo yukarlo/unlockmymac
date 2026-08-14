@@ -47,6 +47,14 @@
 
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!-- Long-pressing the Quick Settings tile. System UI looks for an activity claiming this
+                 action and falls back to the system App info page when it finds none, which is what
+                 it was doing. Pointing it here makes a long press open the app, where the controls
+                 the tile is a shortcut to actually live. -->
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES"/>
+            </intent-filter>
         </activity>
 
         <service
