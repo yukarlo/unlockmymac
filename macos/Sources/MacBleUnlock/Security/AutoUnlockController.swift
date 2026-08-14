@@ -10,17 +10,41 @@ struct KeyCodeMapper {
     struct KeyStroke {
         let keyCode: CGKeyCode
         let shift: Bool
+
+        /// Whether Option has to be held for this key to produce the character.
+        ///
+        /// Needed for anything that is not on the unshifted or shifted face of a key, which on
+        /// European layouts includes characters as ordinary as `@`, `\`, `~` and `€`. Without it those
+        /// fell through to `postUnicodeChar`, and `loginwindow` discards synthetic Unicode under
+        /// Secure Event Input — so a password containing one could never be typed.
+        let option: Bool
+
+        init(keyCode: CGKeyCode, shift: Bool, option: Bool = false) {
+            self.keyCode = keyCode
+            self.shift = shift
+            self.option = option
+        }
     }
 
-    /// Maps a Character to its CGKeyCode and shift state using ANSI table with UCKeyTranslate fallback.
+    /// Maps a Character to the key and modifiers that produce it on the *user's* keyboard layout.
+    ///
+    /// Layout translation first, hardcoded ANSI table only as a fallback. The order used to be the
+    /// other way round, which silently broke every non-US layout: the table is US-QWERTY, so on
+    /// QWERTZ `y` and `z` swap, on AZERTY `a`/`q` and `w`/`z` swap, and Dvorak shares almost nothing
+    /// with it. Every one of those characters was posted as the wrong hardware key, so the password
+    /// was wrong and the lock screen simply refused it with nothing logged — the keystrokes were
+    /// delivered exactly as asked, just not the ones intended.
+    ///
+    /// The table is still worth keeping. `ucKeyTranslate` returns nil when no key on the active layout
+    /// produces the character, and falling back to US keycodes is a better last resort than giving up.
     static func keyStroke(for char: Character) -> KeyStroke? {
-        if let stroke = fallbackAnsiKeyStroke(char: char) {
+        if let stroke = ucKeyTranslate(char: char) {
             return stroke
         }
-        return ucKeyTranslate(char: char)
+        return ansiKeyStroke(char: char)
     }
 
-    private static func fallbackAnsiKeyStroke(char: Character) -> KeyStroke? {
+    private static func ansiKeyStroke(char: Character) -> KeyStroke? {
         switch char {
         case "a": return KeyStroke(keyCode: 0, shift: false)
         case "A": return KeyStroke(keyCode: 0, shift: true)
@@ -143,9 +167,25 @@ struct KeyCodeMapper {
 
         let targetScalar = char.unicodeScalars.first?.value ?? 0
 
+        // UCKeyTranslate takes the modifier byte from the old Carbon event record — the flags shifted
+        // right by 8. So shiftKey (0x0200) is 1 << 1 and optionKey (0x0800) is 1 << 3.
+        let shiftBit: UInt32 = 1 << 1
+        let optionBit: UInt32 = 1 << 3
+
+        // Plainest combination first, so a character reachable without modifiers is never reported as
+        // needing them. Option-Shift is last for the same reason.
+        let combinations: [(shift: Bool, option: Bool)] = [
+            (false, false),
+            (true, false),
+            (false, true),
+            (true, true),
+        ]
+
         for keyCode in UInt16(0)...UInt16(127) {
-            for shift in [false, true] {
-                let modifierState: UInt32 = shift ? (1 << 1) : 0
+            for combination in combinations {
+                var modifierState: UInt32 = 0
+                if combination.shift { modifierState |= shiftBit }
+                if combination.option { modifierState |= optionBit }
                 deadKeyState = 0
                 actualStringLength = 0
 
@@ -162,8 +202,15 @@ struct KeyCodeMapper {
                     &unicodeString
                 )
 
-                if result == noErr && actualStringLength > 0 && UInt32(unicodeString[0]) == targetScalar {
-                    return KeyStroke(keyCode: CGKeyCode(keyCode), shift: shift)
+                // Length 1 exactly, not just non-zero. An Option key that is dead on this layout can
+                // report the combining sequence it would begin, and posting that key alone would type
+                // something else entirely.
+                if result == noErr && actualStringLength == 1 && UInt32(unicodeString[0]) == targetScalar {
+                    return KeyStroke(
+                        keyCode: CGKeyCode(keyCode),
+                        shift: combination.shift,
+                        option: combination.option
+                    )
                 }
             }
         }
@@ -229,6 +276,7 @@ final class AutoUnlockController: ObservableObject {
     private static let keyDelete: CGKeyCode = 0x33
     private static let keyCommand: CGKeyCode = 0x37
     private static let keyShift: CGKeyCode = 0x38
+    private static let keyOption: CGKeyCode = 0x3A
     private static let keySpace: CGKeyCode = 0x31
     private static let keyEscape: CGKeyCode = 0x35
 
@@ -484,28 +532,58 @@ final class AutoUnlockController: ObservableObject {
         }
     }
 
+    /// Posts one character as a real key press, holding whichever modifiers the layout requires.
+    ///
+    /// Modifiers are posted as their own key events rather than only as flags on the key itself.
+    /// `loginwindow` tracks modifier state from those events, so a flags-only press is read as an
+    /// unmodified one — which is why this has always pressed Shift explicitly. Option needs the same
+    /// treatment, and both at once for Option-Shift characters.
     private func postKeyStroke(_ stroke: KeyCodeMapper.KeyStroke) {
         let source = CGEventSource(stateID: .hidSystemState)
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: stroke.keyCode, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: stroke.keyCode, keyDown: false) else { return }
 
+        var flags: CGEventFlags = []
+        var modifierKeys: [CGKeyCode] = []
         if stroke.shift {
-            let shiftDown = CGEvent(keyboardEventSource: source, virtualKey: Self.keyShift, keyDown: true)
-            shiftDown?.flags = .maskShift
-            shiftDown?.post(tap: .cghidEventTap)
-            usleep(5_000)
+            flags.insert(.maskShift)
+            modifierKeys.append(Self.keyShift)
+        }
+        if stroke.option {
+            flags.insert(.maskAlternate)
+            modifierKeys.append(Self.keyOption)
+        }
 
-            keyDown.flags = .maskShift
-            keyUp.flags = .maskShift
+        guard !modifierKeys.isEmpty else {
             keyDown.post(tap: .cghidEventTap)
             keyUp.post(tap: .cghidEventTap)
-            usleep(5_000)
+            return
+        }
 
-            let shiftUp = CGEvent(keyboardEventSource: source, virtualKey: Self.keyShift, keyDown: false)
-            shiftUp?.post(tap: .cghidEventTap)
-        } else {
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
+        // Each modifier goes down carrying every flag held so far, matching what a real keyboard
+        // reports as they accumulate.
+        var accumulated: CGEventFlags = []
+        for key in modifierKeys {
+            accumulated.insert(key == Self.keyShift ? .maskShift : .maskAlternate)
+            let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)
+            down?.flags = accumulated
+            down?.post(tap: .cghidEventTap)
+        }
+        usleep(5_000)
+
+        keyDown.flags = flags
+        keyUp.flags = flags
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        usleep(5_000)
+
+        // Released in reverse, each event carrying what is still held after it lifts — otherwise a
+        // stuck modifier flag can bleed into the next character.
+        for key in modifierKeys.reversed() {
+            accumulated.remove(key == Self.keyShift ? .maskShift : .maskAlternate)
+            let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
+            up?.flags = accumulated
+            up?.post(tap: .cghidEventTap)
         }
     }
 
