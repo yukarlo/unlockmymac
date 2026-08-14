@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.yukarlo.unlockmymac.service.ApprovalActionReceiver
 import com.yukarlo.unlockmymac.service.UnlockNotifier
+import com.yukarlo.unlockmymac.util.ApprovalRequestCodes
 
 /**
  * Watch presentation for the shared service's notifications.
@@ -276,8 +277,10 @@ object WearNotifier : UnlockNotifier {
             }
         return PendingIntent.getBroadcast(
             context,
-            // Distinct request codes, or the second action would overwrite the first's extras.
-            if (approved) 1 else 2,
+            // Per challenge as well as per decision. A fixed pair of codes only separated approve from
+            // deny, so with FLAG_UPDATE_CURRENT below a probe prompt (challenge id -1) and a real
+            // challenge overwrote each other's extras. See [ApprovalRequestCodes].
+            ApprovalRequestCodes.forDecision(challengeId, approved),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

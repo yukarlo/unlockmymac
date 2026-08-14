@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.yukarlo.unlockmymac.MainActivity
 import com.yukarlo.unlockmymac.R
+import com.yukarlo.unlockmymac.util.ApprovalRequestCodes
 
 /** Phone presentation for the shared service's notifications. */
 object UnlockNotifications : UnlockNotifier {
@@ -120,8 +121,9 @@ object UnlockNotifications : UnlockNotifier {
             }
         return PendingIntent.getBroadcast(
             context,
-            // Distinct request codes so approve and deny do not overwrite each other.
-            (challengeId.toInt() shl 1) or if (approved) 1 else 0,
+            // Distinct per challenge *and* per decision, or FLAG_UPDATE_CURRENT below rewrites an
+            // existing intent's extras. See [ApprovalRequestCodes].
+            ApprovalRequestCodes.forDecision(challengeId, approved),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
