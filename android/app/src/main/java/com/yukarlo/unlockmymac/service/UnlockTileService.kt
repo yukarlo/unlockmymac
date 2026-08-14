@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.bluetooth.BluetoothManager
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
@@ -105,9 +106,6 @@ class UnlockTileService : TileService() {
         val bluetoothOn =
             getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true
         tile.label = getString(R.string.tile_label)
-        tile.icon =
-            android.graphics.drawable.Icon
-                .createWithResource(this, R.drawable.ic_tile_discoverable)
 
         // Deliberately not UNAVAILABLE for the permission and Bluetooth cases: an unavailable tile
         // does not accept a tap on every version, and a tap is the only way to get the user to the
@@ -140,6 +138,19 @@ class UnlockTileService : TileService() {
                 tile.subtitle = getString(R.string.tile_state_off)
             }
         }
+
+        // Set from the state resolved above rather than alongside it, so the glyph and the state can
+        // never disagree — the system already colours the tile by state, and an icon that says the
+        // opposite is worse than no icon change at all.
+        tile.icon =
+            Icon.createWithResource(
+                this,
+                if (tile.state == Tile.STATE_ACTIVE) {
+                    R.drawable.ic_tile_discoverable
+                } else {
+                    R.drawable.ic_tile_discoverable_off
+                },
+            )
 
         tile.updateTile()
     }
