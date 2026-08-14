@@ -226,10 +226,18 @@ final class PairingManager: ObservableObject {
         // Re-pairing a device the Mac already knows replaces its record rather than adding a
         // second one: the phone mints a fresh identity key when it is unpaired and paired again,
         // so keeping the old entry would leave a key nothing can sign for.
-        var updated = pairedDevices.filter {
+        //
+        // Read back from the Keychain rather than from `pairedDevices`. This runs on the BLE queue,
+        // and `pairedDevices` is a main-queue-owned `@Published` property — reading it here was a
+        // data race, and one that loses records rather than merely reading a stale count: two
+        // enrolments in flight would each build their list from the same pre-existing snapshot and
+        // the second write would drop the first device. The Keychain is the store being written back,
+        // so it is also the right thing to merge into.
+        let existing = KeychainManager.getPairedDevices()
+        var updated = existing.filter {
             $0.deviceId.caseInsensitiveCompare(deviceId) != .orderedSame
         }
-        let replaced = updated.count != pairedDevices.count
+        let replaced = updated.count != existing.count
         updated.append(record)
 
         if KeychainManager.savePairedDevices(updated) {
