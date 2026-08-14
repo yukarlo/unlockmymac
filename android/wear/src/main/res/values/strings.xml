@@ -26,6 +26,8 @@
     <string name="home_notifications_needed">Approval prompts need notification permission.</string>
     <string name="home_adb_grant_needed">Approvals cannot wake the watch yet. Wear has no setting for this, so run over adb:</string>
     <string name="home_adb_grant_command">appops set %1$s %2$s allow</string>
+    <string name="home_forget_mac">Forget this Mac</string>
+    <string name="home_forget_mac_done">Forgotten. Pair again from the phone.</string>
     <string name="home_probe">Test prompt</string>
     <string name="home_probe_scheduled">Lower your wrist. Prompt in %1$ds.</string>
     <string name="approval_probe_title">Test prompt</string>

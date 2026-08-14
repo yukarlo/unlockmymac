@@ -341,6 +341,25 @@ private fun WearHome() {
                 }
             }
 
+            // Only route to clear a stale pairing on the watch. Without it, a watch that still
+            // believes it is paired to a Mac that has forgotten it keeps accepting challenges and
+            // prompting for unlocks that can never complete — and the "Send key to phone" chip
+            // hides itself while a record exists, so there was no way back short of reinstalling.
+            if (pairedMac != null) {
+                item {
+                    CompactChip(
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(context.getString(R.string.home_forget_mac)) },
+                        onClick = {
+                            scope.launch {
+                                container.forgetPairing()
+                                enrolMessage = context.getString(R.string.home_forget_mac_done)
+                            }
+                        },
+                    )
+                }
+            }
+
             // Fires an approval prompt that resolves nothing, after a delay long enough to put the
             // watch back to sleep. Without it, every test of how the prompt is presented needed the
             // Mac locked and a walk away from it.

@@ -78,14 +78,14 @@ class DiagnosticsViewModel(
     fun unpair() {
         _unpairPrompt.value = false
         viewModelScope.launch {
-            container.pairingCoordinator.close()
-            container.sessions.clear()
-            container.pairing.unpair()
+            // Everything the teardown needs lives in `forgetPairing` — the coordinator close and the
+            // session clear used to be duplicated here, which meant the watch (which has no
+            // Diagnostics screen) skipped them entirely and `deleteKey` ran twice on this path.
+            container.forgetPairing()
+            // Regenerated only here, and only so the fingerprint below has something to show. The
+            // container deliberately leaves key creation to the next `ensureKey`.
             withContext(Dispatchers.IO) {
-                runCatching {
-                    container.signer.deleteKey()
-                    container.signer.ensureKey()
-                }
+                runCatching { container.signer.ensureKey() }
             }
             keyInfo.value =
                 withContext(Dispatchers.IO) {

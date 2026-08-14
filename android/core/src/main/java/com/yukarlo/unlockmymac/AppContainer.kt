@@ -37,6 +37,43 @@ class AppContainer(
 
     /** Session state lives here, not in the service, so it survives service restarts intact. */
     val sessions = ChallengeSessions(ElapsedClock { SystemClock.elapsedRealtime() })
+
+    /**
+     * Forgets the Mac and destroys this device's key, leaving nothing a Mac could still trust.
+     *
+     * Clearing the pairing record alone is not enough. The signing key lives in AndroidKeyStore
+     * under a fixed alias and would survive, so a Mac that still held the matching public key could
+     * verify a signature from a device that considers itself unpaired — the Mac decides who answered
+     * by which stored key verifies, and nothing else. Dropping the key makes any leftover record on
+     * the Mac unusable, which is the mirror of the Mac taking a new installation identity when it
+     * forgets everything.
+     *
+     * A fresh key is created on demand by the next `ensureKey`, so pairing again just works. This
+     * deliberately does not create one eagerly: nothing needs a key until the next enrolment, and
+     * regenerating here would mean the Diagnostics screen's fingerprint changed before the user had
+     * done anything.
+     *
+     * Everything else tied to the old pairing goes too. This used to drop only the record and the key,
+     * with the rest of the teardown living in the phone's Diagnostics screen — so unpairing from the
+     * watch, which has no such screen, left live sessions, a staged enrolment voucher and an on-screen
+     * approval prompt all pointing at a Mac that was no longer trusted. Both form factors call this and
+     * nothing else, so they cannot drift apart again.
+     */
+    suspend fun forgetPairing() {
+        pairing.unpair()
+        signer.deleteKey()
+
+        // Any challenge in flight was addressed to the Mac we just forgot, and its approval can never
+        // be redeemed. Drop the sessions before withdrawing the prompt, so nothing can resolve one in
+        // between.
+        sessions.clear()
+        pairingCoordinator.close()
+        enrolmentCoordinator.clear()
+
+        status.setPendingApproval(null)
+        status.setPairingWindow(null)
+        notifier.cancelApproval(appContext)
+    }
 }
 
 /**
