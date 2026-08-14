@@ -214,6 +214,12 @@ struct PairingView: View {
             bleCentral.start()
         }
         .onDisappear {
+            // Release any exchange still in flight. Both hold the peripheral *and* the single
+            // `bleCentral.connectionDelegate` slot, so closing the window mid-exchange used to block
+            // GATTChallengeClient outright until the 10-15s timeout — and locking the screen right
+            // after closing this window is the obvious thing to do.
+            gattPairingClient.cancel()
+            gattEnrolmentClient.cancel()
             if !scanWasRunningBeforeWindow { bleCentral.stop() }
             isShowingPairingQR = false
         }

@@ -48,6 +48,30 @@ final class GATTPairingClient: NSObject {
         }
     }
 
+    /// Abandons an in-flight exchange, releasing the link and the shared connection delegate.
+    ///
+    /// Needed when the pairing window closes mid-exchange. Without it the peripheral stayed connected
+    /// and `bleCentral.connectionDelegate` stayed pointed here until the 15s timeout below, so a
+    /// screen lock in that window found `GATTChallengeClient` unable to start at all.
+    ///
+    /// Silent: the caller walked away, so there is no result anyone is waiting for.
+    func cancel() {
+        bleCentral.queue.async { [weak self] in
+            guard let self, let peripheral = self.activePeripheral else { return }
+            self.log.notice("Pairing exchange cancelled; releasing the link")
+            self.finish(
+                .failure(NSError(
+                    domain: "GATTPairingClient",
+                    code: -10,
+                    userInfo: [NSLocalizedDescriptionKey: "Pairing cancelled"]
+                )),
+                for: peripheral,
+                disconnect: true,
+                invokeCompletion: false
+            )
+        }
+    }
+
     private func scheduleTimeout() {
         timeoutWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in

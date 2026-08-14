@@ -107,6 +107,21 @@ final class GATTEnrolmentClient: NSObject {
         }
     }
 
+    /// Abandons an in-flight read, releasing the link and the shared connection delegate.
+    ///
+    /// Needed when the pairing window closes mid-read. Without it the peripheral stayed connected and
+    /// `bleCentral.connectionDelegate` stayed pointed here until the read timeout, so a screen lock in
+    /// that window found `GATTChallengeClient` unable to start at all.
+    ///
+    /// Silent: the caller walked away, so there is no result anyone is waiting for.
+    func cancel() {
+        bleCentral.queue.async { [weak self] in
+            guard let self, self.activePeripheral != nil else { return }
+            self.log.notice("Enrolment read cancelled; releasing the link")
+            self.finish(.failure(.transport(nil)), invokeCompletion: false)
+        }
+    }
+
     private func scheduleTimeout() {
         timeoutWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
@@ -116,7 +131,10 @@ final class GATTEnrolmentClient: NSObject {
         bleCentral.queue.asyncAfter(deadline: .now() + Self.readTimeoutSeconds, execute: item)
     }
 
-    private func finish(_ result: Result<PairedDevice, EnrolmentError>) {
+    private func finish(
+        _ result: Result<PairedDevice, EnrolmentError>,
+        invokeCompletion: Bool = true
+    ) {
         guard let peripheral = activePeripheral else { return }
         timeoutWorkItem?.cancel()
         timeoutWorkItem = nil
@@ -132,7 +150,9 @@ final class GATTEnrolmentClient: NSObject {
             bleCentral.connectionDelegate = nil
         }
         bleCentral.cancelConnection(peripheral)
-        DispatchQueue.main.async { pending?(result) }
+        if invokeCompletion {
+            DispatchQueue.main.async { pending?(result) }
+        }
     }
 
     // MARK: - Verification
