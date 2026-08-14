@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage.CIFilterBuiltins
+import CoreBluetooth
 import SwiftUI
 
 /// SwiftUI View for managing Android device pairing.
@@ -17,6 +18,19 @@ struct PairingView: View {
     @State private var scanWasRunningBeforeWindow = false
     @State private var isBlePairingInFlight: Bool = false
     @State private var cachedQRImage: NSImage?
+
+    /// Consecutive failed auto-pairing attempts, and when the last one was tried.
+    ///
+    /// `onChange(of: discoveredPeripherals)` fires on every advertisement — duplicates are on so the
+    /// scan can tell a live handle from a rotated-away one — so without these the moment a failure
+    /// cleared `isBlePairingInFlight` the next advertisement started another attempt. Measured with
+    /// both sides unpaired: connect, write claim, rejected, disconnect, reconnect every ~1.6s, 90
+    /// rejections and still going, both radios busy for nothing. The phone was answering
+    /// `pairing_window_closed` every time, which is not transient and will not improve by asking
+    /// faster.
+    @State private var blePairingFailures: Int = 0
+    @State private var lastBlePairingAttempt: Date?
+    @State private var blePairingStartedAt: Date?
 
     private let gattPairingClient: GATTPairingClient
     private let gattEnrolmentClient: GATTEnrolmentClient
@@ -227,6 +241,11 @@ struct PairingView: View {
 
     private func setupPairingSession() {
         guard cachedQRImage == nil else { return }
+        // A fresh session is the user asking again, so the give-up counter starts over. Without
+        // this, pressing Pair after three failures would do nothing at all.
+        blePairingFailures = 0
+        lastBlePairingAttempt = nil
+        blePairingStartedAt = nil
         if let jsonString = pairingManager.startPairingSession() {
             cachedQRImage = generateQRCodeImage(from: jsonString)
         }
@@ -248,24 +267,58 @@ struct PairingView: View {
                 .sorted { ($0.averageRSSI ?? -200) > ($1.averageRSSI ?? -200) }
                 .map(\.peripheral)
 
-            guard let target = candidates.first else {
+            guard !candidates.isEmpty else {
                 isEnrolmentInFlight = false
                 statusMessage = "No paired device is in range"
                 isError = true
+                EventLogger.shared.warning(category: "Pairing", "No device in range to read an enrolment offer from")
                 return
             }
 
-            statusMessage = "Asking \(target.name ?? "your device") if it is vouching for anything…"
-            gattEnrolmentClient.readOffer(from: target) { result in
+            askNextCandidateForOffer(candidates, index: 0)
+        }
+    }
+
+    /// Asks each device in range in turn until one is vouching for something.
+    ///
+    /// Strongest-first only, which is what this used to do, is wrong as soon as more than one of our
+    /// peripherals is around: the offer is staged on the phone, but a watch on the wrist is the
+    /// stronger signal, so the Mac asked the watch and got nothing. Measured with an offer live on
+    /// the phone — four reads, all against the wrong peripheral, and no outcome logged either.
+    ///
+    /// Trying every candidate is safe because the offer names this Mac and is signed: a device with
+    /// nothing staged simply answers "nothing to enrol", and nothing is trusted on the basis of
+    /// which peripheral happened to answer.
+    private func askNextCandidateForOffer(_ candidates: [CBPeripheral], index: Int) {
+        guard index < candidates.count else {
+            isEnrolmentInFlight = false
+            statusMessage = "No device in range is vouching for anything. Send the key from the watch, then try again."
+            isError = true
+            EventLogger.shared.warning(
+                category: "Pairing",
+                "Asked \(candidates.count) device(s) for an enrolment offer; none had one staged"
+            )
+            return
+        }
+
+        let target = candidates[index]
+        statusMessage = "Asking \(target.name ?? "device \(index + 1) of \(candidates.count)") if it is vouching for anything…"
+
+        gattEnrolmentClient.readOffer(from: target) { result in
+            switch result {
+            case .success(let device):
                 isEnrolmentInFlight = false
-                switch result {
-                case .success(let device):
-                    statusMessage = "Added \(device.name)"
-                    isError = false
-                case .failure(let error):
-                    statusMessage = error.description
-                    isError = true
-                }
+                statusMessage = "Added \(device.name)"
+                isError = false
+                EventLogger.shared.info(category: "Pairing", "Enrolled '\(device.name)' from a vouched offer")
+            case .failure(let error):
+                // Log every attempt: the read outcome was previously invisible, so a failure looked
+                // like the button doing nothing at all.
+                EventLogger.shared.info(
+                    category: "Pairing",
+                    "No offer from \(target.identifier.uuidString): \(error.description)"
+                )
+                askNextCandidateForOffer(candidates, index: index + 1)
             }
         }
     }
@@ -273,12 +326,52 @@ struct PairingView: View {
     /// Long enough for a phone advertising once a second in low-power mode to be heard.
     private static let enrolmentScanSeconds: TimeInterval = 3
 
+    /// Refusals before auto-pairing gives up and waits for the user.
+    ///
+    /// Counts only answers from the device — a claim it actually rejected. Transport failures
+    /// (timeout, failed connect, dropped link) do not count, because they say nothing about whether
+    /// the device would accept: measured re-pairing, the Mac wrote its claim 0.9s before the phone
+    /// opened its pairing window, then the next two attempts timed out on the connect itself, and a
+    /// flat three-strike cap gave up on a pairing that was moments from working. `blePairingBudget`
+    /// bounds those instead, so a genuinely absent device still stops the loop.
+    private static let maxBlePairingFailures = 3
+
+    /// How long to keep retrying past transport failures before giving up.
+    private static let blePairingBudget: TimeInterval = 90
+
+    /// Minimum gap between auto-pairing attempts.
+    ///
+    /// A phone in low-power mode advertises about once a second, so without this the retry rate is
+    /// set by the advertising interval rather than by anything meaningful.
+    private static let blePairingRetryInterval: TimeInterval = 5
+
     private func attemptAutoBlePairing(peripherals: [UUID: DiscoveredPeripheral]) {
+        // Freshest handle that has advertised since we last hung up on it, not an arbitrary dictionary
+        // entry. `values.first` has no defined order, so a stale handle sitting alongside a live one
+        // could be picked over and over — and each pick costs a full connect timeout to learn nothing.
+        let target = peripherals.values
+            .filter(\.heardSinceDisconnect)
+            .max(by: { $0.lastSeenAt < $1.lastSeenAt })
+
         guard !isBlePairingInFlight,
               pairingManager.pairedDevices.isEmpty || isShowingPairingQR,
               let token = pairingManager.activePairingToken,
-              let targetPeripheral = peripherals.values.first?.peripheral else { return }
+              let targetPeripheral = target?.peripheral else { return }
 
+        guard blePairingFailures < Self.maxBlePairingFailures else { return }
+
+        if blePairingStartedAt == nil { blePairingStartedAt = Date() }
+        if let started = blePairingStartedAt,
+           Date().timeIntervalSince(started) > Self.blePairingBudget {
+            return
+        }
+
+        if let last = lastBlePairingAttempt,
+           Date().timeIntervalSince(last) < Self.blePairingRetryInterval {
+            return
+        }
+
+        lastBlePairingAttempt = Date()
         isBlePairingInFlight = true
         statusMessage = "Device detected over BLE! Pairing…"
         isError = false
@@ -291,9 +384,31 @@ struct PairingView: View {
                 isError = false
                 isShowingPairingQR = false
                 cachedQRImage = nil
+                blePairingFailures = 0
             case .failure(let err):
-                statusMessage = "BLE pairing attempt failed: \(err.localizedDescription)"
                 isError = true
+                // Only a refusal from the device counts. Everything the transport can throw at us
+                // is bounded by `blePairingBudget` instead.
+                let nsError = err as NSError
+                let isTransport = nsError.domain == "GATTPairingClient"
+                    && [-1, -2, -3].contains(nsError.code)
+                if !isTransport { blePairingFailures += 1 }
+
+                let outOfBudget = blePairingStartedAt.map {
+                    Date().timeIntervalSince($0) > Self.blePairingBudget
+                } ?? false
+
+                if blePairingFailures >= Self.maxBlePairingFailures || outOfBudget {
+                    // Say what to do rather than keep hammering. The overwhelmingly common cause is
+                    // that the device has no pairing screen open, which only the user can change.
+                    statusMessage = "Could not pair. Open the pairing screen on the device first, then press Pair again."
+                    EventLogger.shared.warning(
+                        category: "Pairing",
+                        "Auto-pairing gave up (\(blePairingFailures) refusal(s), budget \(outOfBudget ? "spent" : "left")): \(err.localizedDescription)"
+                    )
+                } else {
+                    statusMessage = "BLE pairing attempt failed: \(err.localizedDescription)"
+                }
             }
         }
     }
