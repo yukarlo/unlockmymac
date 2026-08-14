@@ -23,7 +23,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.util.concurrent.ConcurrentHashMap
 
 /** Everything the GATT server needs to know about app state at the moment of a request. */
 class GattContext(
@@ -100,47 +99,36 @@ class GattServerController(
     private var gattServer: BluetoothGattServer? = null
 
     /**
-     * Addresses of centrals that have used this service, in no particular order.
+     * Who counts as connected, and whether that is worth reporting. See [ConnectedCentrals].
      *
-     * Concurrent rather than a `synchronizedSet` so the reconciliation below needs no `synchronized`
-     * block. That block also made this file undeployable via Android Studio Live Edit: its
-     * interpreter failed to release the monitor and aborted the process with
-     * `JNI DETECTED ERROR IN APPLICATION: Still holding a locked object on JNI end` inside
-     * [publishConnectedCentrals]. Insertion order is not read anywhere.
+     * Lives in its own class so the two decisions that have gone wrong here — stranding a stale
+     * address, and swallowing a link that came and went — are reachable from a unit test without a
+     * `Context` or a radio.
      */
-    private val connected: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val centrals = ConnectedCentrals()
 
-    /** Last count handed to the listener, so an unchanged sweep does not look like an event. */
-    @Volatile
-    private var lastPublishedCount = -1
 
     /**
      * Counts a device once it has actually used this service.
      *
      * The ACL-level connect callback says nothing about intent — everything the phone connects to
      * over LE arrives there. A read or write against one of our characteristics does not, so that is
-     * what earns a place in [connected] and in the count the UI shows.
+     * what earns a place in the count the UI shows.
      */
     private fun noteEngagement(device: BluetoothDevice) {
-        if (connected.add(device.address)) publishConnectedCentrals(force = true)
+        if (centrals.add(device.address)) publishConnectedCentrals(force = true)
     }
 
     /**
      * Republishes the central count, reconciled against what the Bluetooth stack actually holds.
      *
-     * [connected] only ever grew and shrank from callbacks, so a single missed
-     * `STATE_DISCONNECTED` stranded an address in it for the life of the GATT server. Observed as
-     * the app reporting two connected Macs when only one exists, and — because the post-disconnect
-     * advertising restart is gated on the count reaching zero — as that restart silently never
-     * running again: no `Central disconnected; restarting advertising` followed the disconnect at
-     * 22:04:04.
-     *
-     * `getConnectedDevices(GATT_SERVER)` is the stack's own answer, so a dropped callback
-     * self-heals on the next connection change or sweep instead of persisting. Falling back to the
-     * local set if the manager is unavailable keeps this no worse than before.
+     * `getConnectedDevices(GATT_SERVER)` is the stack's own answer, so a dropped callback self-heals
+     * on the next connection change or sweep instead of persisting. Falling back to the local set
+     * when the manager is unavailable keeps this no worse than before.
      *
      * @param force notify the listener even if the count has not moved. Required from every
-     *   connection change, and must stay off for the periodic sweep — see below.
+     *   connection change; must stay off for the periodic sweep. Both reasons are on
+     *   [ConnectedCentrals.countToPublish].
      */
     @SuppressLint("MissingPermission") // Reading connection state needs no permission we lack.
     fun publishConnectedCentrals(force: Boolean = false) {
@@ -153,35 +141,13 @@ class GattServerController(
                     ?.toSet()
             }.getOrNull()
 
-        if (live != null) {
-            // No lock: [connected] is concurrent, and `removeAll` racing a `noteEngagement` add can
-            // only drop a central that is about to re-add itself on its next read or write, which
-            // the following sweep reconciles anyway.
-            val stale = connected - live
-            if (stale.isNotEmpty()) {
-                eventLog.info("Dropping ${stale.size} central(s) the Bluetooth stack no longer holds")
-                connected.removeAll(stale)
-            }
+        val dropped = centrals.reconcile(live)
+        if (dropped.isNotEmpty()) {
+            eventLog.info("Dropping ${dropped.size} central(s) the Bluetooth stack no longer holds")
         }
 
-        val count = connected.size
-        status.setConnectedCentrals(count)
-
-        // Unchanged counts are swallowed for the 15s session sweep only. The listener reacts to zero
-        // by restarting the advertisement, and Android mints a new resolvable address every time it
-        // does — an unconditional call from the sweep produced a fresh address every 15.00s, which
-        // left the Mac dialling handles that had already rotated away and took an unlock from ~7s to
-        // 39-48s.
-        //
-        // A connection change must never be swallowed, hence [force]. Since membership is earned by
-        // *using* the service, a central that connects and drops without touching a characteristic
-        // leaves the count at zero throughout — so the gate alone hid both transitions, while the
-        // controller had already stopped the connectable advertisement when the link came up.
-        // Nothing was left to restart it and the device went silently undiscoverable.
-        if (force || count != lastPublishedCount) {
-            lastPublishedCount = count
-            listener.onConnectedCentralsChanged(count)
-        }
+        status.setConnectedCentrals(centrals.count)
+        centrals.countToPublish(force)?.let(listener::onConnectedCentralsChanged)
     }
 
     /** Pairing identity blob, staged on a valid claim write and served on the following read. */
@@ -269,8 +235,7 @@ class GattServerController(
                 val server = gattServer ?: return@withContext
                 gattServer = null
                 stagedPairingResponse = null
-                connected.clear()
-                lastPublishedCount = -1
+                centrals.clear()
                 sessions.clear()
                 status.setConnectedCentrals(0)
                 runCatching { server.close() }.onFailure { Log.w(TAG, "GATT server close threw", it) }
@@ -289,13 +254,13 @@ class GattServerController(
     @SuppressLint("MissingPermission") // Same permission as opening the server.
     fun disconnectAllCentrals(): Int {
         val server = gattServer ?: return 0
-        val devices = connected.toList()
+        val devices = centrals.snapshot()
         for (address in devices) {
             val device = runCatching { adapterFor(address) }.getOrNull() ?: continue
             runCatching { server.cancelConnection(device) }
                 .onFailure { Log.w(TAG, "cancelConnection threw", it) }
         }
-        connected.clear()
+        centrals.clear()
         status.setConnectedCentrals(0)
         return devices.size
     }
@@ -351,7 +316,7 @@ class GattServerController(
                     }
 
                     BluetoothProfile.STATE_DISCONNECTED -> {
-                        connected.remove(key)
+                        centrals.remove(key)
                         // Everything tied to this connection dies with it: no cross-connection reuse.
                         val hadPendingApproval =
                             sessions.current(key)?.approval == ApprovalState.PENDING

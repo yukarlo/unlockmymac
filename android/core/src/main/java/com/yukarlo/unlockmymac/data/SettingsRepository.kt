@@ -26,6 +26,30 @@ enum class AdvertiseMode {
      * was about to land, and both of its attempts die the same way.
      */
     BALANCED,
+    ;
+
+    companion object {
+        /**
+         * Turns a stored preference value back into a mode, falling back to [default] when absent.
+         *
+         * A free function rather than inline in the flow so it can be tested: the whole watch
+         * connect-stall came from this resolution, and reaching it through a `DataStore` and a
+         * `Context` needs an instrumented test for what is three lines of pure logic.
+         *
+         * `LOW_POWER` is matched explicitly rather than left to the `else`. Without that branch a
+         * form factor whose default is `BALANCED` would silently override a user who had turned the
+         * toggle *off*, because a stored `LOW_POWER` is indistinguishable from nothing stored.
+         */
+        fun fromStored(
+            stored: String?,
+            default: AdvertiseMode,
+        ): AdvertiseMode =
+            when (stored) {
+                BALANCED.name -> BALANCED
+                LOW_POWER.name -> LOW_POWER
+                else -> default
+            }
+    }
 }
 
 class AppSettings(
@@ -57,12 +81,7 @@ class SettingsRepository(
                 serviceEnabled = prefs[SERVICE_ENABLED] ?: false,
                 paused = prefs[PAUSED] ?: false,
                 requireApproval = prefs[REQUIRE_APPROVAL] ?: false,
-                advertiseMode =
-                    when (prefs[ADVERTISE_MODE]) {
-                        AdvertiseMode.BALANCED.name -> AdvertiseMode.BALANCED
-                        AdvertiseMode.LOW_POWER.name -> AdvertiseMode.LOW_POWER
-                        else -> defaultAdvertiseMode
-                    },
+                advertiseMode = AdvertiseMode.fromStored(prefs[ADVERTISE_MODE], defaultAdvertiseMode),
                 deviceName = prefs[DEVICE_NAME] ?: android.os.Build.MODEL ?: "Android",
             )
         }

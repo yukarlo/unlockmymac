@@ -25,5 +25,24 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Sources/MacBleUnlock/Resources/Info.plist
     scheme:
-      testTargets: []
-      gatherCoverageData: false
+      testTargets:
+        - MacBleUnlockTests
+      gatherCoverageData: true
+
+  # The logic worth testing here is the timing and classification code that has been retuned
+  # repeatedly from recollection — backoff selection, error classification, RSSI smoothing, keyboard
+  # layout mapping. None of it needs a radio, and until now none of it had a target to live in.
+  MacBleUnlockTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/MacBleUnlockTests
+    dependencies:
+      - target: MacBleUnlock
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        GENERATE_INFOPLIST_FILE: YES
+        # Unsigned on CI, where no certificate exists.
+        CODE_SIGN_STYLE: Automatic
