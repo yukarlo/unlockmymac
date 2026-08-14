@@ -142,6 +142,7 @@ final class PresenceStateMachine: ObservableObject {
         self.autoUnlockController = autoUnlockController
 
         observeDiscoveredPeripherals()
+        observePairedDevices()
         observeScreenLockState()
         observeDisplaySleepState()
         observeSystemWake()
@@ -215,6 +216,28 @@ final class PresenceStateMachine: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.evaluatePresence()
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Stands down the moment the last paired device is forgotten.
+    ///
+    /// Without this, unpairing left the machine sitting in `.authenticatedNear` or `.unlockCooldown`
+    /// with the heartbeat still running and any in-flight handshake still going, until some unrelated
+    /// discovery happened to trigger a re-evaluation. Auto-unlock is gated on a verified signature, so
+    /// nothing unsafe followed — but the app went on reporting a device it no longer trusted, and kept
+    /// the radio busy on its behalf.
+    private func observePairedDevices() {
+        pairingManager.$pairedDevices
+            .receive(on: DispatchQueue.main)
+            .map(\.isEmpty)
+            .removeDuplicates()
+            .sink { [weak self] isEmpty in
+                guard let self, isEmpty else { return }
+                EventLogger.shared.info(category: "State", "Last paired device forgotten — standing down")
+                if self.gattClient.isBusy { self.gattClient.cancel() }
+                self.transitionTo(.absent)
+                self.bleCentral.stop()
             }
             .store(in: &cancellables)
     }
