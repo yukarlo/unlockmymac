@@ -138,6 +138,21 @@ final class GATTChallengeClient: NSObject {
     /// Consecutive re-issued approval reads that drew no reply. Reset by any callback.
     private var approvalReadRetries = 0
 
+    /// Whether a `readValue` we issued is still awaiting its reply.
+    ///
+    /// This is what distinguishes a pushed notification from a read reply. `isNotifying` cannot: it
+    /// reports whether notifications are *enabled*, and since we subscribe before writing the
+    /// challenge it is true for the whole session — so it labelled every value, reads included, as
+    /// "pushed". Answering "did the push actually arrive?" then took hand-correlating six poll
+    /// timestamps against the arrival, twice.
+    ///
+    /// Conservative by construction: a push landing while a read is outstanding is attributed to the
+    /// read, so this can under-count pushes but never invent one.
+    private var readOutstanding = false
+
+    /// True once the peripheral has confirmed our subscription, so an approval will be pushed.
+    private var isSubscribedForPush = false
+
     /// Fires if `didConnect` never arrives. See `armConnectWatchdog`.
     private var connectWatchdog: DispatchWorkItem?
     private var connectAttempt = 0
@@ -196,6 +211,12 @@ final class GATTChallengeClient: NSObject {
 
     /// Re-read cadence once a prompt looks like it has been left unanswered.
     private static let approvalSlowPollInterval: TimeInterval = 1.5
+
+    /// Re-read cadence while subscribed: a liveness check, not a way of learning the answer.
+    ///
+    /// Long enough to stop competing with the push, short enough that the watchdog below still
+    /// notices a stalled link within a few seconds rather than at the 60 s timeout.
+    private static let approvalPushKeepaliveInterval: TimeInterval = 3.0
 
     /// How long past a scheduled read to wait before assuming its reply is not coming.
     ///
@@ -373,17 +394,25 @@ final class GATTChallengeClient: NSObject {
         scheduleTimeout(duration: 60)
     }
 
-    /// How long to wait before asking the phone again whether the user has decided.
+    /// How long to wait before asking the peripheral again whether the user has decided.
     ///
-    /// The phone cannot volunteer the answer — the response characteristic is read-only, so the
-    /// Mac only learns of an approval on its next poll, and that poll interval is added directly
-    /// to the delay the user feels after tapping Approve. Polling quickly at first collapses
-    /// that; nearly every approval lands within a few seconds of the prompt appearing.
+    /// Three cadences, because the reason for asking changed once the peripheral could push:
     ///
-    /// The slow tail matters because the approval window is a full minute: a prompt left
-    /// unanswered on the lock screen would otherwise cost 240 pointless round trips, each one
-    /// waking the phone's GATT server for an answer that is not ready.
+    /// - **Subscribed**: the answer arrives on its own, so reading is only a liveness check. Measured
+    ///   2026-08-15 00:15:11, the pushed signature landed 129 ms after a poll reply and 129 ms *before*
+    ///   the next read was due — the fast poll contributed nothing but 40 round trips per approval,
+    ///   and each one was a second claimant that could race the push for the signature.
+    /// - **Not subscribed, recently prompted**: the old fast poll. The peripheral cannot volunteer the
+    ///   answer, so the interval is added directly to the delay the user feels after tapping Approve.
+    /// - **Not subscribed, prompt going stale**: the slow tail, so a prompt left unanswered for the
+    ///   full minute does not cost 240 pointless round trips.
+    ///
+    /// Polling is deliberately *not* switched off entirely when subscribed. Every answered read is
+    /// proof the link still carries ATT traffic, and that is the only thing that detects the stall
+    /// which lost two approvals tonight — with no reads at all, a dead link and a user who has not
+    /// tapped yet look identical until the 60 s timeout.
     private func approvalReadDelay() -> TimeInterval {
+        if isSubscribedForPush { return Self.approvalPushKeepaliveInterval }
         guard let since = approvalPendingSince,
               Date().timeIntervalSince(since) < Self.approvalFastPollWindow else {
             return Self.approvalSlowPollInterval
@@ -436,11 +465,17 @@ final class GATTChallengeClient: NSObject {
                 Approval read drew no reply; re-issuing \
                 (\(self.approvalReadRetries, privacy: .public) of \(Self.maxApprovalReadRetries, privacy: .public))
                 """)
-            peripheral.readValue(for: characteristic)
+            self.issueRead(peripheral, characteristic)
             self.armApprovalReadWatchdog(after: delay, peripheral: peripheral, characteristic: characteristic)
         }
         approvalReadWatchdog = item
         bleCentral.queue.asyncAfter(deadline: .now() + delay + Self.approvalReadWatchdogGrace, execute: item)
+    }
+
+    /// Every read goes through here so `readOutstanding` cannot drift out of step with reality.
+    private func issueRead(_ peripheral: CBPeripheral, _ characteristic: CBCharacteristic) {
+        readOutstanding = true
+        peripheral.readValue(for: characteristic)
     }
 
     private func finish(
@@ -458,6 +493,8 @@ final class GATTChallengeClient: NSObject {
         approvalReadWatchdog?.cancel()
         approvalReadWatchdog = nil
         approvalReadRetries = 0
+        readOutstanding = false
+        isSubscribedForPush = false
         connectAttempt = 0
         connectStartedAt = nil
         isRetryingConnect = false
@@ -604,7 +641,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             return
         }
         log.notice("Challenge payload written, reading response signature")
-        peripheral.readValue(for: responseCharacteristic)
+        issueRead(peripheral, responseCharacteristic)
     }
 
     private func targetDeviceName(for peripheral: CBPeripheral) -> String {
@@ -629,7 +666,8 @@ extension GATTChallengeClient: CBPeripheralDelegate {
         if let error {
             log.notice("Could not subscribe to response notifications, will poll instead: \(error.localizedDescription, privacy: .public)")
         } else if characteristic.isNotifying {
-            log.notice("Subscribed to response notifications; an approval will be pushed rather than polled for")
+            isSubscribedForPush = true
+            log.notice("Subscribed to response notifications; polling drops to a keepalive")
         }
     }
 
@@ -637,6 +675,10 @@ extension GATTChallengeClient: CBPeripheralDelegate {
         guard peripheral === activePeripheral, characteristic.uuid == BLEProtocol.responseCharacteristicUUID else { return }
 
         // The reply we were waiting on arrived, whatever it says. Any 0x80 below arms a fresh one.
+        // Captured before clearing: the label below needs to know whether *this* value answered a
+        // read we had issued, and the flag has to be cleared here for the next one.
+        let answeredAReadWeIssued = readOutstanding
+        readOutstanding = false
         approvalReadWatchdog?.cancel()
         approvalReadWatchdog = nil
         approvalReadRetries = 0
@@ -659,11 +701,12 @@ extension GATTChallengeClient: CBPeripheralDelegate {
                 // interval here while the delay was adaptive meant every early poll logged a
                 // cadence six times slower than the one it actually used.
                 let delay = approvalReadDelay()
-                log.notice("\(deviceName, privacy: .public) is waiting for the user to approve; will re-read in \(Int(delay * 1000))ms (ATT 0x80)")
+                let mode = isSubscribedForPush ? "keepalive" : "poll"
+                log.notice("\(deviceName, privacy: .public) is waiting for the user to approve; \(mode, privacy: .public) re-read in \(Int(delay * 1000))ms (ATT 0x80)")
 
                 bleCentral.queue.asyncAfter(deadline: .now() + delay) { [weak self] in
                     guard let self, self.activePeripheral === peripheral else { return }
-                    peripheral.readValue(for: characteristic)
+                    self.issueRead(peripheral, characteristic)
                 }
                 armApprovalReadWatchdog(after: delay, peripheral: peripheral, characteristic: characteristic)
                 return
@@ -700,10 +743,8 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             return
         }
 
-        // `isNotifying` tells the two apart: a push arrives unsolicited on a subscribed
-        // characteristic, a read reply arrives because we asked. Worth separating in the log — the
-        // whole point of the push is that it works when reads are not being delivered.
-        let arrival = characteristic.isNotifying ? "pushed" : "read"
+        // A value with no read outstanding can only have been pushed. See `readOutstanding`.
+        let arrival = answeredAReadWeIssued ? "read" : "pushed"
         log.notice("Received \(signatureData.count)-byte ECDSA signature (\(arrival, privacy: .public)), verifying...")
 
         // Verify against every authorised device, not just the one the challenge named.

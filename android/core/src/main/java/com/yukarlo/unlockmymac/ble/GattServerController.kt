@@ -260,6 +260,8 @@ class GattServerController(
                 gattServer = null
                 stagedPairingResponse = null
                 centrals.clear()
+                // Subscriptions belong to connections this server owned; a new server starts with none.
+                subscribers.clear()
                 sessions.clear()
                 status.setConnectedCentrals(0)
                 runCatching { server.close() }.onFailure { Log.w(TAG, "GATT server close threw", it) }
@@ -285,6 +287,7 @@ class GattServerController(
                 .onFailure { Log.w(TAG, "cancelConnection threw", it) }
         }
         centrals.clear()
+        subscribers.clear()
         status.setConnectedCentrals(0)
         return devices.size
     }
@@ -348,14 +351,24 @@ class GattServerController(
                 is ChallengeSessions.Result.Sign ->
                     runCatching { signer.sign(claim.pending.request.rawPayload) }
                         .onSuccess { sessions.attachSignature(claim.pending, it) }
-                        .onFailure { eventLog.error("Signing failed for $tag: ${it.javaClass.simpleName}") }
+                        .onFailure {
+                            // Discard, exactly as the read path does. The challenge is already marked
+                            // used, so leaving it would report SIGNING_IN_PROGRESS forever and the
+                            // central would poll until its own timeout instead of failing fast.
+                            sessions.discard(claim.pending)
+                            eventLog.error("Signing failed for $tag: ${it.javaClass.simpleName}")
+                        }
                         .getOrNull()
 
                 is ChallengeSessions.Result.Refused -> null
             } ?: return
 
         runCatching { notifyCharacteristic(server, device, characteristic, signature) }
-            .onSuccess { eventLog.info("Pushed the signature for $tag without waiting to be read") }
+            // "Handed to the stack", not "delivered". `notifyCharacteristicChanged` returning without
+            // throwing only means the notification was queued — measured 2026-08-14 23:58:34, this
+            // logged success for a push the Mac never received, because the link had stopped carrying
+            // ATT traffic in both directions. Overstating it here sent the investigation the wrong way.
+            .onSuccess { eventLog.info("Handed the signature for $tag to the stack to push") }
             .onFailure { eventLog.warn("Could not push the signature for $tag: ${it.message}") }
     }
 
@@ -404,6 +417,11 @@ class GattServerController(
 
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         centrals.remove(key)
+                        // CCCD state is per-connection, so this entry is stale the moment the link
+                        // drops. Leaving it meant pushing to a subscription that no longer exists and
+                        // logging a failure for it — and because addresses rotate, the set grew for
+                        // the whole life of the process.
+                        subscribers.remove(key)
                         // Everything tied to this connection dies with it: no cross-connection reuse.
                         val hadPendingApproval =
                             sessions.current(key)?.approval == ApprovalState.PENDING
@@ -554,14 +572,19 @@ class GattServerController(
             is ChallengeSessions.Result.Refused -> {
                 val gattStatus =
                     when (claim.reason) {
-                        RejectReason.AWAITING_APPROVAL -> GattStatus.PENDING_APPROVAL
+                        // Both mean "valid, answer not ready yet" from the central's point of view,
+                        // and both are answered by asking again — which is exactly what the central
+                        // does with PENDING_APPROVAL.
+                        RejectReason.AWAITING_APPROVAL,
+                        RejectReason.SIGNING_IN_PROGRESS,
+                        -> GattStatus.PENDING_APPROVAL
 
                         // Tell the Mac this was a deliberate "no" so it stops re-challenging.
                         RejectReason.DENIED_BY_USER -> GattStatus.DENIED
 
                         else -> GattStatus.REJECTED
                     }
-                if (claim.reason != RejectReason.AWAITING_APPROVAL) {
+                if (claim.reason !in NOT_YET_READY) {
                     eventLog.warn("Response read refused: ${claim.reason.name.lowercase()}")
                     status.recordAuth(AuthOutcome.REJECTED, "-", claim.reason.name.lowercase())
                     // An expired challenge can still have a prompt on screen. Withdraw it.
@@ -737,6 +760,9 @@ class GattServerController(
     }
 
     private companion object {
+        /** Reasons that are not failures: the challenge is live and an answer is imminent. */
+        val NOT_YET_READY = setOf(RejectReason.AWAITING_APPROVAL, RejectReason.SIGNING_IN_PROGRESS)
+
         const val TAG = "GattServer"
     }
 }

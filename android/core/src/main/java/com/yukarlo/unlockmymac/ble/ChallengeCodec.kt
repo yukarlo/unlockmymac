@@ -27,6 +27,19 @@ enum class RejectReason {
     NO_PENDING_CHALLENGE,
     EXPIRED,
     ALREADY_USED,
+
+    /**
+     * The signature for this challenge is being produced right now.
+     *
+     * Not a refusal: the challenge is valid and an answer is moments away. Distinct from
+     * [ALREADY_USED] because that is a genuine replay — a replayed read finds the cached signature
+     * and is served it, so a claimed-but-unsigned challenge can only mean signing is in flight.
+     *
+     * Reachable because two things now ask for the signature: the notification pushed when the user
+     * approves, and the central's own read. Whichever arrives second used to be told ALREADY_USED and
+     * gave up with an opaque rejection, throwing away an approval the user had just given.
+     */
+    SIGNING_IN_PROGRESS,
     PREPARED_WRITE,
     BAD_OFFSET,
     SIGNING_FAILED,

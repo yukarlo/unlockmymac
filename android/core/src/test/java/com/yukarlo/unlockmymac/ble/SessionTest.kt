@@ -98,9 +98,28 @@ class ChallengeSessionsTest {
         assertTrue(sessions.claimForSigning("aa") is ChallengeSessions.Result.Sign)
 
         val second = sessions.claimForSigning("aa")
+        // Still refused — the security property is that one challenge yields at most one signature.
+        // The reason changed from ALREADY_USED: claimed-but-unsigned can only mean signing is in
+        // flight, since success caches the signature and failure discards the challenge. Reporting a
+        // replay here made the central give up on an approval that was moments from arriving.
         assertEquals(
-            RejectReason.ALREADY_USED,
+            RejectReason.SIGNING_IN_PROGRESS,
             (second as ChallengeSessions.Result.Refused).reason,
+        )
+    }
+
+    /** The other half of that argument: a failed signing attempt must not look like one in flight. */
+    @Test
+    fun `a discarded challenge reports no pending challenge rather than in progress`() {
+        sessions.offer("aa", request(1), ttlMs = 10_000, requiresApproval = false)
+        val claim = sessions.claimForSigning("aa") as ChallengeSessions.Result.Sign
+
+        sessions.discard(claim.pending)
+
+        val after = sessions.claimForSigning("aa")
+        assertEquals(
+            RejectReason.NO_PENDING_CHALLENGE,
+            (after as ChallengeSessions.Result.Refused).reason,
         )
     }
 

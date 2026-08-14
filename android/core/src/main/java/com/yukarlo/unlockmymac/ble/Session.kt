@@ -157,7 +157,11 @@ class ChallengeSessions(
             }
             val cached = pending.signature
             if (cached != null) return Result.Cached(pending, cached)
-            if (pending.used) return Result.Refused(RejectReason.ALREADY_USED)
+            // Claimed but not yet signed means another caller is signing this very moment — the
+            // approval push and the central's read both claim, and one of them gets here second.
+            // Telling it ALREADY_USED refused a live challenge and lost the approval; saying "in
+            // progress" makes the caller ask again and be served the cached signature.
+            if (pending.used) return Result.Refused(RejectReason.SIGNING_IN_PROGRESS)
             // Marked used *before* signing so a concurrent read cannot produce a second signature.
             pending.used = true
             return Result.Sign(pending)
