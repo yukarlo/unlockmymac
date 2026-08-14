@@ -66,7 +66,32 @@ final class BLECentralManager: NSObject, ObservableObject {
     @Published private(set) var isScanning: Bool = false
 
     /// Peripherals seen advertising the unlock service, keyed by CoreBluetooth identifier.
-    @Published private(set) var discoveredPeripherals: [UUID: DiscoveredPeripheral] = [:]
+    ///
+    /// Owned by the **main** queue: every mutation below dispatches there, and every SwiftUI and
+    /// `PresenceStateMachine` reader observes it there too. Code running on `queue` must read
+    /// `peripheralsOnQueue()` instead — see the mirror below.
+    @Published private(set) var discoveredPeripherals: [UUID: DiscoveredPeripheral] = [:] {
+        didSet {
+            // Mirrored rather than locked. `queue` callers (the connect watchdog, the device-name
+            // lookup) used to read the main-queue dictionary directly, which is a data race — and the
+            // comment justifying it claimed the mutations happened on `queue`, which they never did.
+            //
+            // A snapshot is enough because those callers want a recent value, not a synchronised one:
+            // they use it for a log line and a display name. Neither is worth a lock on the path that
+            // handles every advertisement.
+            let snapshot = discoveredPeripherals
+            queue.async { [weak self] in self?.queueLocalPeripherals = snapshot }
+        }
+    }
+
+    /// `queue`-confined mirror of `discoveredPeripherals`. Never touch from any other queue.
+    private var queueLocalPeripherals: [UUID: DiscoveredPeripheral] = [:]
+
+    /// The most recent view of `discoveredPeripherals` visible to `queue`. Must be called on `queue`.
+    ///
+    /// Lags the main-queue original by one dispatch hop, which is why this is deliberately a function
+    /// rather than a property that reads like the real thing.
+    func peripheralsOnQueue() -> [UUID: DiscoveredPeripheral] { queueLocalPeripherals }
 
     /// How long a peripheral can go unseen before it's dropped from `discoveredPeripherals`.
     ///
@@ -188,6 +213,31 @@ final class BLECentralManager: NSObject, ObservableObject {
             for peripheral in held {
                 self.centralManager.cancelPeripheralConnection(peripheral)
             }
+        }
+    }
+
+    /// Clears a system-held link to one peripheral, leaving links to other devices alone.
+    ///
+    /// The targeted counterpart to `reclaimSystemConnections`. Use this when a specific handle has
+    /// exhausted its retries: the blanket version cancels every system-held link matching the service
+    /// UUID, which with a phone and a watch both paired meant giving up on one dropped the other.
+    ///
+    /// Goes through `retrieveConnectedPeripherals` rather than cancelling `peripheral` directly,
+    /// because the point is to catch links owned by bluetoothd rather than by this process — a
+    /// `cancelPeripheralConnection` on a handle this process never connected is a no-op.
+    func reclaimSystemConnection(for peripheral: CBPeripheral) {
+        queue.async { [weak self] in
+            guard let self, self.centralManager.state == .poweredOn else { return }
+            let held = self.centralManager.retrieveConnectedPeripherals(
+                withServices: [BLEProtocol.serviceUUID]
+            )
+            guard let match = held.first(where: { $0.identifier == peripheral.identifier }) else { return }
+            self.log.notice("Reclaiming the system-held link to \(match.identifier.uuidString, privacy: .public)")
+            EventLogger.shared.info(
+                category: "BLE",
+                "Clearing a stale Bluetooth connection held by macOS"
+            )
+            self.centralManager.cancelPeripheralConnection(match)
         }
     }
 

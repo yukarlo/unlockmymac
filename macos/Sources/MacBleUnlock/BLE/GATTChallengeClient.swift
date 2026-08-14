@@ -141,16 +141,44 @@ final class GATTChallengeClient: NSObject {
     private var connectWatchdog: DispatchWorkItem?
     private var connectAttempt = 0
 
+    /// The `deviceId` of the paired record whose key verified the last successful signature.
+    ///
+    /// Read on `bleCentral.queue`. Set only on a verified signature and never cleared on failure, so
+    /// it always names the device the current link belongs to — identity comes from the key that
+    /// verified, never from an address or an advertised name.
+    private(set) var authenticatedDeviceId: String?
+
+    /// When the first `connect` for this session went out, so establishment can be measured.
+    ///
+    /// Deliberately the *first* attempt rather than the current one: a retry usually inherits the
+    /// link the previous attempt was already opening, so timing from the retry reports a connect as
+    /// fast when the user waited far longer. `connectWatchdogSeconds` has been re-tuned twice from
+    /// recollection because this number was never recorded.
+    private var connectStartedAt: Date?
+
     /// True between cancelling a stalled connect and issuing the retry, so the resulting
     /// disconnect/failToConnect callbacks are not mistaken for a genuine failure.
     private var isRetryingConnect = false
 
     /// How long to wait for `didConnect` before assuming the address is stale.
     ///
-    /// Measured establishment varies a lot — 670 ms to 2130 ms — because the central has to
-    /// catch an advertising event and Low Power mode advertises only once a second. 4 s clears
-    /// the observed worst case with margin; going tighter cancels connections that were about
-    /// to succeed, which is worse than the stall being fixed.
+    /// Establishment cannot beat the peer's advertising interval, because the central has to catch an
+    /// advertising event to open the link. Measured against a phone on Balanced (250 ms adverts):
+    /// 670 ms, and twice effectively zero on an already-open link. Against a watch on Low Power
+    /// (1 s adverts): ~3.0 s.
+    ///
+    /// Back to 4.0s from 2.5s. 2.5s was set from a 2130 ms worst case that only ever covered the
+    /// phone, and the watch beat it every time: on 2026-08-14 the one watch connect that succeeded
+    /// did so at ~3.0s — after this watchdog had already cancelled it, and only because the retry
+    /// inherited the same in-flight link. The next session cancelled at 2.66s and 2.69s and gave up
+    /// entirely, with the watch advertising healthily throughout and its GATT server never seeing a
+    /// connection at all. Cancelling a connect that is still progressing cannot help: `connect` has
+    /// no timeout, so left alone it would have landed.
+    ///
+    /// The cost of the wider budget is bounded at 8.3s for a genuinely dead handle, and the watch now
+    /// defaults to Balanced (see `AdvertiseMode` on the Android side), so the common case is well
+    /// under a second either way. If this needs tuning again, tune it against the establishment
+    /// duration now logged on every `didConnect` rather than from memory.
     private static let connectWatchdogSeconds: TimeInterval = 4.0
 
     /// Initial attempt plus one retry.
@@ -232,6 +260,7 @@ final class GATTChallengeClient: NSObject {
 
             self.scheduleTimeout()
             self.connectAttempt = 1
+            self.connectStartedAt = Date()
             self.log.notice("Connecting to \(peripheral.identifier.uuidString, privacy: .public) for GATT authentication")
             EventLogger.shared.info(category: "GATT", "Initiating challenge handshake")
             self.bleCentral.connect(peripheral)
@@ -266,7 +295,11 @@ final class GATTChallengeClient: NSObject {
                 // A connect that never completes and never fails is the signature of a link
                 // bluetoothd is holding on our behalf. Clear it so the next attempt is not
                 // fighting the same corpse — this is what kept the app wedged for 11 hours.
-                self.bleCentral.reclaimSystemConnections()
+                //
+                // Only this peripheral's link, though. `reclaimSystemConnections` cancels every
+                // system-held link advertising the unlock service, so with a phone and a watch both
+                // paired, giving up on one tore down a perfectly healthy link to the other.
+                self.bleCentral.reclaimSystemConnection(for: peripheral)
                 self.finish(.failure(.connectionFailed(nil)), for: peripheral, disconnect: true)
                 return
             }
@@ -298,17 +331,21 @@ final class GATTChallengeClient: NSObject {
     /// "no recent advertisement" is the interesting case: it means the peripheral has already
     /// aged out of `discoveredPeripherals`, which is direct evidence for the stale-address theory.
     ///
-    /// Called from the watchdog, which runs on `bleCentral.queue` — the same queue that mutates
-    /// `discoveredPeripherals`, so this needs no further synchronisation.
+    /// Called from the watchdog, which runs on `bleCentral.queue`, so it reads the queue-confined
+    /// mirror. `discoveredPeripherals` itself is main-queue owned — reading it here was a data race.
     private func radioContext(for peripheral: CBPeripheral) -> String {
-        guard let entry = bleCentral.discoveredPeripherals[peripheral.identifier] else {
-            return "no recent advertisement"
+        // How long the connect has actually been outstanding. Without it a stall report cannot be
+        // told apart from a watchdog set too tight, which is exactly the mistake this file has made
+        // twice.
+        let waited = connectStartedAt.map { String(format: ", waited %.1fs", Date().timeIntervalSince($0)) } ?? ""
+        guard let entry = bleCentral.peripheralsOnQueue()[peripheral.identifier] else {
+            return "no recent advertisement\(waited)"
         }
         let age = String(format: "%.1f", Date().timeIntervalSince(entry.lastSeenAt))
         guard let rssi = entry.averageRSSI else {
-            return "no RSSI yet, last advertised \(age)s ago"
+            return "no RSSI yet, last advertised \(age)s ago\(waited)"
         }
-        return String(format: "%.1f dBm, last advertised %@s ago", rssi, age)
+        return String(format: "%.1f dBm, last advertised %@s ago%@", rssi, age, waited)
     }
 
     /// Aborts in-flight handshake.
@@ -421,6 +458,7 @@ final class GATTChallengeClient: NSObject {
         approvalReadWatchdog = nil
         approvalReadRetries = 0
         connectAttempt = 0
+        connectStartedAt = nil
         isRetryingConnect = false
 
         let pendingCompletion = completion
@@ -454,7 +492,13 @@ extension GATTChallengeClient: BLEPeripheralConnectionDelegate {
         guard peripheral === activePeripheral else { return }
         connectWatchdog?.cancel()
         connectWatchdog = nil
-        log.notice("Connected, discovering unlock service")
+        // The number `connectWatchdogSeconds` has to be set from. Measured from the first attempt, so
+        // it reflects what the user waited even when a retry is what finally reported success.
+        let established = connectStartedAt.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "?"
+        log.notice("""
+            Connected after \(established, privacy: .public)s \
+            on attempt \(self.connectAttempt, privacy: .public); discovering unlock service
+            """)
         peripheral.discoverServices([BLEProtocol.serviceUUID])
     }
 
@@ -552,7 +596,7 @@ extension GATTChallengeClient: CBPeripheralDelegate {
     }
 
     private func targetDeviceName(for peripheral: CBPeripheral) -> String {
-        if let name = bleCentral.discoveredPeripherals[peripheral.identifier]?.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let name = bleCentral.peripheralsOnQueue()[peripheral.identifier]?.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return name.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let name = peripheral.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
