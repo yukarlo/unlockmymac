@@ -249,6 +249,14 @@ class BleUnlockService :
      * for good, while the Mac keeps reconnecting on its retained peripheral handle so the
      * failure looks like "authentication works but discovery is dead".
      */
+    override fun onCentralLinkEstablished() {
+        // Keyed off the ACL, not off the central count: the count is earned by a read or write, which
+        // lands after the link is already up and the controller has already gone quiet. Inferring
+        // "paused" from a non-zero count therefore left the UI claiming to be discoverable for the
+        // whole gap between connecting and the challenge write.
+        advertiser.markPausedByConnection()
+    }
+
     override fun onConnectedCentralsChanged(count: Int) {
         val current = settings ?: return
         if (count > 0) {
