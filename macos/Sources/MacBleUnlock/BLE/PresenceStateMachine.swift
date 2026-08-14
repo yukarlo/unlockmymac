@@ -69,6 +69,9 @@ final class PresenceStateMachine: ObservableObject {
     private let autoUnlockController: AutoUnlockController
 
     private var cancellables = Set<AnyCancellable>()
+
+    /// Phase durations for the attempt in flight. Emitted as one line when it ends.
+    private var timeline = UnlockTimeline()
     @Published private(set) var authenticatedPeripheralId: UUID?
 
     /// Which paired device `authenticatedPeripheralId` actually is, by `deviceId`.
@@ -772,10 +775,36 @@ final class PresenceStateMachine: ObservableObject {
         heartbeatTimer = nil
     }
 
+    /// Times one unlock attempt and emits a single line for it. See [UnlockTimeline].
+    ///
+    /// An attempt starts when we leave `.absent` — the first moment there is something to time — and
+    /// ends when it reaches `.unlockCooldown` (the keystrokes went out) or falls back to `.absent`
+    /// (it failed). Reported either way: a failed attempt's phase breakdown is the more useful of the
+    /// two, because it says which phase ran out of budget.
+    private func recordTimeline(from oldState: PresenceState, to newState: PresenceState, at instant: Date) {
+        if oldState == .absent {
+            timeline.begin(newState, at: instant)
+            return
+        }
+
+        timeline.mark(newState, at: instant)
+
+        let finished = newState == .unlockCooldown || newState == .absent
+        guard finished else { return }
+
+        if let summary = timeline.summary(endingAt: instant) {
+            let outcome = newState == .unlockCooldown ? "unlocked" : "gave up"
+            log.notice("Timeline (\(outcome, privacy: .public)): \(summary, privacy: .public)")
+            EventLogger.shared.info(category: "Timing", "Unlock \(outcome): \(summary)")
+        }
+        timeline.reset()
+    }
+
     private func transitionTo(_ newState: PresenceState) {
         guard currentState != newState else { return }
         let oldState = currentState
         currentState = newState
+        recordTimeline(from: oldState, to: newState, at: Date())
         EventLogger.shared.info(category: "State", "Presence state changed: \(oldState) → \(newState)")
         // Also to the unified log, so state changes can be correlated with GATT timings in a
         // `log stream` capture rather than only being visible in the in-app Diagnostics window.
