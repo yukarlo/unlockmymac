@@ -458,8 +458,18 @@ final class PresenceStateMachine: ObservableObject {
         // connection we would have failed.
         let reachable = alive.filter(\.heardSinceDisconnect)
 
-        let certain = reachable.filter(isCertainlyLive)
-        let preferred = certain.isEmpty ? reachable : certain
+        // Deprioritise anything whose last full connect session failed, while something else is on
+        // offer. See `failedConnectAt`.
+        let cooldownStart = Date().addingTimeInterval(-Self.failedConnectCooldownSeconds)
+        let unverifiedStart = Date().addingTimeInterval(-Self.unverifiedSignatureCooldownSeconds)
+        let unblemished = reachable.filter {
+            (failedConnectAt[$0.id] ?? .distantPast) < cooldownStart
+                && (unverifiedSignatureAt[$0.id] ?? .distantPast) < unverifiedStart
+        }
+        let usable = unblemished.isEmpty ? reachable : unblemished
+
+        let certain = usable.filter(isCertainlyLive)
+        let preferred = certain.isEmpty ? usable : certain
 
         if let strongest = preferred.max(by: { ($0.averageRSSI ?? -200) < ($1.averageRSSI ?? -200) }) {
             return strongest
@@ -471,6 +481,34 @@ final class PresenceStateMachine: ObservableObject {
         // advertisement is cheaper than talking to a corpse.
         return nil
     }
+
+    /// Addresses that answered with a signature no stored key could verify, and when.
+    ///
+    /// Unpairing on the Mac is one-sided: it deletes the device's key but cannot tell the device,
+    /// which keeps a valid paired-Mac record and so keeps accepting challenges and prompting. Every
+    /// such answer costs a prompt the user taps for nothing plus the 10s auth backoff. Measured with
+    /// a forgotten watch in range: two consecutive unlocks lost to it before the phone got a turn.
+    ///
+    /// Deprioritised for longer than a failed connect, because this is not a transient link problem
+    /// — the device will keep answering exactly the same way until it is re-enrolled. Still only
+    /// consulted while something else is available, so a genuine key rotation cannot lock the user
+    /// out: if that device is all there is, it is challenged again and the failure is surfaced.
+    private var unverifiedSignatureAt: [UUID: Date] = [:]
+
+    /// How long an address that failed verification stays deprioritised.
+    private static let unverifiedSignatureCooldownSeconds: TimeInterval = 120
+
+    /// Addresses whose entire connect session failed, and when.
+    ///
+    /// Only consulted while a different live handle is available, so this can never turn a connect
+    /// we would have made into a wait — if the failed address is all there is, it is dialled again.
+    private var failedConnectAt: [UUID: Date] = [:]
+
+    /// How long a failed address stays deprioritised.
+    ///
+    /// Long enough to cover the gap until the peer restarts advertising and mints a new address,
+    /// short enough that a one-off failure does not exile a good handle for a whole lock session.
+    private static let failedConnectCooldownSeconds: TimeInterval = 20
 
     /// How recently a handle must have been heard for it to be worth dialling.
     ///
@@ -495,6 +533,7 @@ final class PresenceStateMachine: ObservableObject {
             }
             // Address rotated: drop the pin so we re-acquire under the new identifier.
             authenticatedPeripheralId = nil
+            authenticatedDeviceId = nil
         }
 
         return peripherals.values
