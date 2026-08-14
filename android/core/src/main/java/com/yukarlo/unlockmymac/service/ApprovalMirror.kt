@@ -5,9 +5,9 @@ import android.util.Log
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.Wearable
 import com.yukarlo.unlockmymac.container
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
@@ -46,22 +46,33 @@ object ApprovalMirror {
         val challengeId: Long,
     )
 
-    private val _dismissed = MutableSharedFlow<DismissedApproval>(extraBufferCapacity = 8)
+    private val _dismissed = MutableStateFlow<DismissedApproval?>(null)
 
     /**
      * The last mirrored challenge the originating device said was finished with.
      *
      * A dismiss can only cancel a notification, and a mirrored prompt may be showing as a
      * full-screen activity instead. This lets that UI notice and close itself.
+     *
+     * State rather than an event stream, because the reader cannot be relied on to be listening at the
+     * moment this arrives. `WearApprovalActivity` collects inside `repeatOnLifecycle(STARTED)`, and the
+     * watch deliberately raises these prompts while it is asleep — so STOPPED is the *normal* state
+     * when a dismiss lands, and a replayless `SharedFlow` dropped it and left an answered prompt on
+     * screen. A `StateFlow` is readable on subscribe, so a late collector still sees it.
+     *
+     * Not `SharedFlow(replay = 1)`: this is a process-wide object and challenge ids are small
+     * incrementing numbers, so a retained dismissal would be redelivered to a *fresh* prompt that
+     * happened to reuse an id and close it instantly. Readers must therefore match on `nodeId` and
+     * `challengeId` together — see [DismissedApproval] — which they already do.
      */
-    val dismissed: SharedFlow<DismissedApproval> = _dismissed.asSharedFlow()
+    val dismissed: StateFlow<DismissedApproval?> = _dismissed.asStateFlow()
 
     fun markDismissed(
         nodeId: String,
         challengeId: Long,
     ) {
         Log.i(TAG, "markDismissed(node=$nodeId, challenge=$challengeId)")
-        _dismissed.tryEmit(DismissedApproval(nodeId, challengeId))
+        _dismissed.value = DismissedApproval(nodeId, challengeId)
     }
 
     /** Asks nearby paired devices to show this prompt too. */

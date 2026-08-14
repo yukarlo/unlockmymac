@@ -99,8 +99,12 @@ class WearApprovalActivity : ComponentActivity() {
                             if (!resolved && pendingId != challengeId) closeAlreadyAnswered()
                         }
                 } else {
+                    // A StateFlow, so a dismiss that arrived while this activity was STOPPED — which is
+                    // the common case, since the prompt is raised on a sleeping watch — is still seen
+                    // on resubscribe rather than lost.
                     ApprovalMirror.dismissed.collect { dismissed ->
                         if (!resolved &&
+                            dismissed != null &&
                             dismissed.challengeId == challengeId &&
                             dismissed.nodeId == originNodeId
                         ) {
