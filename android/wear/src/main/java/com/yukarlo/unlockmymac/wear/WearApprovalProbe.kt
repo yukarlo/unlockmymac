@@ -1,7 +1,10 @@
 package com.yukarlo.unlockmymac.wear
 
+import android.annotation.SuppressLint
 import android.content.Context
 import androidx.core.app.NotificationManagerCompat
+import com.yukarlo.unlockmymac.container
+import com.yukarlo.unlockmymac.permissions.BlePermissions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,12 +48,25 @@ object WearApprovalProbe {
      * arrive long after the wrist was raised again. The foreground service keeps the process alive
      * for the seconds this needs.
      */
+    // The notify below is guarded by the hasNotifications check inside the coroutine, which lint
+    // cannot follow across the suspend boundary. Without this :wear:lintDebug fails the build — the
+    // task that first caught this had never been run before CI existed.
+    @SuppressLint("MissingPermission")
     fun schedule(context: Context) {
         val appContext = context.applicationContext
         pending?.cancel()
         pending =
             scope.launch {
                 delay(DELAY_SECONDS * 1_000L)
+                // Checked here rather than at the call site: the permission can be revoked during the
+                // delay, and posting without it drops the notification silently — so the test prompt
+                // would appear to do nothing at all, which is the one thing a test prompt must not do.
+                if (!BlePermissions.hasNotifications(appContext)) {
+                    appContext.container.eventLog.warn(
+                        "Test prompt skipped: notification permission is not granted",
+                    )
+                    return@launch
+                }
                 val notification =
                     WearNotifier.approvalRequest(
                         context = appContext,
