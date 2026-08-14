@@ -1,0 +1,60 @@
+name: macOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'macos/**'
+      - '.github/workflows/macos.yml'
+  pull_request:
+    paths:
+      - 'macos/**'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macos-15 rather than macos-14: the sources carry no @available guards at all, so they are
+    # implicitly written against whatever SDK the developer has, and macos-14 pins an Xcode several
+    # major versions behind that. Narrowing the gap removes a whole class of "compiles here, not
+    # there" before it starts costing time.
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: macos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The .xcodeproj is generated from project.yml and deliberately not committed, so there is
+      # nothing to build until this runs.
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate the Xcode project
+        run: xcodegen generate
+
+      # Printed before the build so a failure is diagnosable from the log alone. The first CI run
+      # failed here with the log unreadable without auth, and the runner's toolchain is far behind a
+      # current local one — worth seeing the gap rather than inferring it.
+      - name: Toolchain and schemes
+        run: |
+          xcodebuild -version
+          xcrun --show-sdk-version
+          swift --version
+          xcodebuild -list -project MacBleUnlock.xcodeproj
+
+      # No signing on CI: this is a personal sideloaded app and the runner holds no certificate.
+      # Without these the build fails looking for a development team rather than on anything real.
+      #
+      # Deliberately no -destination. It was set to 'platform=macOS' in the first version of this
+      # workflow and never tested anywhere; every build verified locally omits it, and destination
+      # resolution on a runner is a common way for this to fail. Omitting it builds for the host,
+      # which is what is wanted.
+      - name: Build
+        run: |
+          xcodebuild build \
+            -scheme MacBleUnlock \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""

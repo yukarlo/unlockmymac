@@ -1,0 +1,49 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+    # Only when the Android half or this workflow changes. The macOS job has the mirror image of
+    # this, so a change to one platform does not spend a runner on the other.
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Unit tests and lint before assembling: both are faster than a full build, and lint failing
+      # is the more likely outcome — :core:lintDebug has broken the build before.
+      - run: ./gradlew :core:test
+
+      - run: ./gradlew :core:lintDebug :app:lintDebug :wear:lintDebug
+
+      - run: ./gradlew :app:assembleDebug :wear:assembleDebug
+
+      - name: Upload lint reports
+        # Wanted precisely when something failed above.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: android/*/build/reports/lint-results-*.html
+          if-no-files-found: ignore
