@@ -1,5 +1,6 @@
 package com.yukarlo.unlockmymac.service
 
+import android.annotation.SuppressLint
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import com.google.android.gms.wearable.MessageEvent
@@ -59,6 +60,9 @@ class MirroredApprovalReceiver : WearableListenerService() {
         }
     }
 
+    // The `notify` below is guarded by the `hasNotifications` check on the first line, which lint
+    // cannot follow through the helper. Without this the whole `:core:lintDebug` task fails.
+    @SuppressLint("MissingPermission")
     private fun showMirroredPrompt(
         sourceNodeId: String,
         challengeId: Long,

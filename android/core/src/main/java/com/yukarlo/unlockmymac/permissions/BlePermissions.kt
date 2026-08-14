@@ -24,7 +24,15 @@ object BlePermissions {
             Manifest.permission.BLUETOOTH_CONNECT,
         )
 
-    /** Requested alongside the above; denial degrades the UI but does not break BLE. */
+    /**
+     * Requested alongside the above; denial degrades the UI but does not break BLE.
+     *
+     * `POST_NOTIFICATIONS` arrived in API 33 and minSdk here is 31. Safe to reference anyway: it is a
+     * compile-time string constant, so it is inlined rather than looked up, and on 31–32 the
+     * permission simply is not enforced — `checkSelfPermission` returns granted and the request is a
+     * no-op.
+     */
+    @SuppressLint("InlinedApi")
     val NOTIFICATIONS = arrayOf(Manifest.permission.POST_NOTIFICATIONS)
 
     val CAMERA = arrayOf(Manifest.permission.CAMERA)
@@ -60,26 +68,29 @@ object BlePermissions {
  * and quietly disappearing.
  */
 object BatteryOptimization {
-    fun isExempt(context: Context): Boolean = context
-        .getSystemService(PowerManager::class.java)
-        ?.isIgnoringBatteryOptimizations(context.packageName) == true
+    fun isExempt(context: Context): Boolean =
+        context
+            .getSystemService(PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(context.packageName) == true
 
     /**
      * Opens the system prompt asking the user to exempt this app. The exemption cannot be
      * granted programmatically — only the user can allow it.
      */
     @SuppressLint("BatteryLife") // Personal sideloaded build; see the manifest comment.
-    fun requestExemptionIntent(packageName: String): Intent = Intent(
-        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-        "package:$packageName".toUri(),
-    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun requestExemptionIntent(packageName: String): Intent =
+        Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            "package:$packageName".toUri(),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     /**
      * Samsung's "Sleeping apps" list is separate from the Doze exemption and can still stop
      * the service. Sends the user to this app's system settings page to check it.
      */
-    fun appSettingsIntent(packageName: String): Intent = Intent(
-        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-        "package:$packageName".toUri(),
-    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun appSettingsIntent(packageName: String): Intent =
+        Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            "package:$packageName".toUri(),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 }
