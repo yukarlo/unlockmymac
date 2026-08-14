@@ -4,12 +4,14 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattServer
 import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.yukarlo.unlockmymac.crypto.KeystoreSigner
 import com.yukarlo.unlockmymac.data.AuthOutcome
@@ -23,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 /** Everything the GATT server needs to know about app state at the moment of a request. */
 class GattContext(
@@ -107,6 +110,13 @@ class GattServerController(
      */
     private val centrals = ConnectedCentrals()
 
+    /**
+     * Addresses that have subscribed to [BleUuids.RESPONSE] notifications.
+     *
+     * Only ever consulted to decide whether pushing is possible; the read path stays available either
+     * way, so an unsubscribed central is not a failure.
+     */
+    private val subscribers: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
      * Counts a device once it has actually used this service.
@@ -197,11 +207,25 @@ class GattServerController(
                     ),
                 )
                 service.addCharacteristic(
+                    // NOTIFY alongside READ. Read alone means the Mac can only learn of an approval on
+                    // its next poll, so it polls every 250ms for up to a minute — and if those reads
+                    // stop being delivered while the link stays up, the approval is stranded and the
+                    // unlock dies with the user having already tapped Approve. Measured three times.
+                    //
+                    // READ stays: it is the fallback when the central does not subscribe, and it is
+                    // still what serves ATT blob continuations for a signature larger than one MTU.
                     BluetoothGattCharacteristic(
                         BleUuids.RESPONSE,
-                        BluetoothGattCharacteristic.PROPERTY_READ,
+                        BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
                         BluetoothGattCharacteristic.PERMISSION_READ,
-                    ),
+                    ).apply {
+                        addDescriptor(
+                            BluetoothGattDescriptor(
+                                BleUuids.CLIENT_CHARACTERISTIC_CONFIG,
+                                BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE,
+                            ),
+                        )
+                    },
                 )
                 service.addCharacteristic(
                     BluetoothGattCharacteristic(
@@ -336,6 +360,30 @@ class GattServerController(
                 // resolvable address — in the middle of the handshake. Pausing on connect is
                 // [GattServerListener.onCentralLinkEstablished]'s job instead.
                 publishConnectedCentrals(force = newState == BluetoothProfile.STATE_DISCONNECTED)
+            }
+
+            @SuppressLint("MissingPermission")
+            override fun onDescriptorWriteRequest(
+                device: BluetoothDevice,
+                requestId: Int,
+                descriptor: BluetoothGattDescriptor,
+                preparedWrite: Boolean,
+                responseNeeded: Boolean,
+                offset: Int,
+                value: ByteArray?,
+            ) {
+                if (descriptor.uuid != BleUuids.CLIENT_CHARACTERISTIC_CONFIG) {
+                    if (responseNeeded) respond(device, requestId, GattStatus.REJECTED, offset, true)
+                    return
+                }
+                // Subscribing is engagement: it is a write against our service, so it earns the same
+                // place in the count that a challenge write does.
+                noteEngagement(device)
+
+                val enabling = value != null && value.isNotEmpty() && value[0].toInt() != 0
+                if (enabling) subscribers.add(device.address) else subscribers.remove(device.address)
+                eventLog.info("Mac ${if (enabling) "subscribed to" else "unsubscribed from"} response notifications")
+                if (responseNeeded) respond(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, true)
             }
 
             override fun onCharacteristicWriteRequest(

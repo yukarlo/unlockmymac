@@ -13,8 +13,22 @@ object BleUuids {
     /** Mac writes the challenge payload here. WRITE. */
     val CHALLENGE: UUID = UUID.fromString("f9a2b8e3-54cd-4e92-a123-765432198766")
 
-    /** Mac reads the DER ECDSA signature here. READ. */
+    /**
+     * Mac reads the DER ECDSA signature here, or is notified of it. READ + NOTIFY.
+     *
+     * Notify matters when the challenge is held for manual approval: read-only meant the Mac could
+     * only learn the answer on its next poll, so it polled for up to a minute and an approval was
+     * lost outright whenever those reads stopped being delivered on a link that stayed up.
+     */
     val RESPONSE: UUID = UUID.fromString("f9a2b8e3-54cd-4e92-a123-765432198767")
+
+    /**
+     * Standard Client Characteristic Configuration descriptor, for subscribing to [RESPONSE].
+     *
+     * The Bluetooth-assigned 0x2902, not one of ours — a central writes it to enable notifications
+     * and every stack expects it at this UUID.
+     */
+    val CLIENT_CHARACTERISTIC_CONFIG: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     /** Mac writes a pairing token and reads back our identity here. WRITE + READ. */
     val PAIRING: UUID = UUID.fromString("f9a2b8e3-54cd-4e92-a123-765432198768")
