@@ -315,8 +315,13 @@ final class AutoUnlockController: ObservableObject {
         observeScreenLockState()
     }
 
+    /// Tokens for the `DistributedNotificationCenter` observers, removed in `deinit`.
+    private var notificationTokens: [NSObjectProtocol] = []
+
     deinit {
         pollTimer?.invalidate()
+        let center = DistributedNotificationCenter.default()
+        notificationTokens.forEach(center.removeObserver)
     }
 
     /// Checks and updates current Accessibility authorization state.
@@ -451,24 +456,33 @@ final class AutoUnlockController: ObservableObject {
     private func observeScreenLockState() {
         let center = DistributedNotificationCenter.default()
 
-        center.addObserver(
-            forName: NSNotification.Name("com.apple.screenIsLocked"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.attemptsThisLockSession = 0
-            self?.lastAttemptDate = nil
-            EventLogger.shared.info(category: "AutoUnlock", "Screen locked — auto-unlock re-armed")
-        }
+        // Tokens kept so `deinit` can deregister. Block-based observers are keyed by their token rather
+        // than by `self`, so discarding them leaves the blocks registered for the lifetime of the
+        // process. Harmless today — this controller lives as long as the app does, so `deinit` never
+        // runs — but the same omission in `PresenceStateMachine` would be a real leak, and it is not
+        // worth leaving one instance of the pattern wrong.
+        notificationTokens.append(
+            center.addObserver(
+                forName: NSNotification.Name("com.apple.screenIsLocked"),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.attemptsThisLockSession = 0
+                self?.lastAttemptDate = nil
+                EventLogger.shared.info(category: "AutoUnlock", "Screen locked — auto-unlock re-armed")
+            }
+        )
 
-        center.addObserver(
-            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.attemptsThisLockSession = 0
-            self?.lastAttemptDate = nil
-        }
+        notificationTokens.append(
+            center.addObserver(
+                forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.attemptsThisLockSession = 0
+                self?.lastAttemptDate = nil
+            }
+        )
     }
 
     private func observeAppActivation() {
