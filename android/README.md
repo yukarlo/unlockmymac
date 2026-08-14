@@ -116,9 +116,10 @@ makes it invisible for good, while the Mac keeps reconnecting on its retained pe
 discoverable when the radio is not.
 
 Likewise, `serviceEnabled` is persisted in DataStore but `serviceRunning` is in-memory. After an
-app reinstall, force stop, or reboot the switch would read ON with nothing running, so the Home
-screen reconciles the two on resume and restarts the service. Note that this requires opening
-the app once after a reboot — there is no `BOOT_COMPLETED` receiver.
+app reinstall or force stop the switch would read ON with nothing running, so the Home screen
+reconciles the two on resume and restarts the service. A reboot is handled without opening the
+app: `BootReceiver` starts the service from `BOOT_COMPLETED`, registered in both the phone and
+watch manifests.
 
 ---
 
