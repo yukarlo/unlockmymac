@@ -25,9 +25,11 @@ enum GATTChallengeError: Error, CustomStringConvertible {
     /// The peripheral refused the challenge with the deliberately opaque `0x81`.
     ///
     /// Opaque by design, so this covers several causes — replay, clock skew, another central
-    /// mid-session — but the expected one with several devices paired is simply that the challenge
-    /// named a different device. The caller answers by re-addressing it to the next candidate
-    /// rather than by backing off.
+    /// mid-session — but the expected one is simply that this device is not paired with this Mac.
+    ///
+    /// Treated as security-relevant, so it takes the long backoff, and the refusing handle is put on
+    /// cooldown in `PresenceStateMachine` so the next cycle tries a different candidate. It is not
+    /// forgotten: the address is live and reachable, it just will not answer us.
     case rejectedByPeer
 
     /// The user explicitly refused. Warrants a long backoff, not a prompt retry.
@@ -50,11 +52,10 @@ enum GATTChallengeError: Error, CustomStringConvertible {
             return true
         // `sessionAlreadyInProgress` is not a failure at all — the caller treats it as a no-op
         // before it reaches any backoff. Listed here only so this switch stays exhaustive.
-        // `sessionAlreadyInProgress` is not a failure at all — the caller treats it as a no-op
-        // before it reaches any backoff. `deniedByUser` is a deliberate decision and must not
-        // get the short retry, or denying produces a fresh prompt seconds later.
-        // `rejectedByPeer` is handled before any backoff applies: the caller retries against the
-        // next paired device, and only a rejection from every one of them reaches a backoff.
+        // `deniedByUser` is a deliberate decision and must not get the short retry, or denying
+        // produces a fresh prompt seconds later.
+        // `rejectedByPeer` takes the long backoff and additionally puts the refusing handle on
+        // cooldown, so the next attempt picks a different candidate rather than the same one.
         case .sessionAlreadyInProgress, .deniedByUser, .rejectedByPeer,
              .randomBytesUnavailable, .invalidSignature, .missingPairingData:
             return false

@@ -573,6 +573,28 @@ final class PresenceStateMachine: ObservableObject {
                 // next attempt selects the same one and stalls again.
                 if case .connectionFailed = error {
                     self.bleCentral.forget(peripheralId: peripheral.identifier)
+                    // Forgetting is not enough on its own: the peer only mints a new address when
+                    // it restarts advertising, and a connect that never succeeded does not make it
+                    // restart. So the same address is rediscovered seconds later and dialled again.
+                    // Measured at 23:24: 8.8s failing on 8D119CEB, then 8.9s failing on 8D119CEB
+                    // again, then 1.4s to connect on BEC9B10F. Every recovery tonight came from a
+                    // new address; not one came from retrying a bad one.
+                    self.failedConnectAt[peripheral.identifier] = Date()
+                }
+                if case .invalidSignature = error {
+                    self.unverifiedSignatureAt[peripheral.identifier] = Date()
+                }
+                // A refusal is about this device, so it earns a cooldown of its own. `rejectedByPeer`
+                // is not transport-level, so it already takes the long backoff — but nothing recorded
+                // *which* handle refused, leaving it fully selectable in `connectTarget()`. The next
+                // cycle then dialled the same refusing device again, and with a stranger or a
+                // half-unpaired device nearby that starved the devices that would have answered.
+                //
+                // Deliberately not `forget`: unlike a dead handle this address is live and reachable,
+                // it simply will not answer *this* Mac. Keeping it discoverable means it can be tried
+                // again later, once the pairing it is missing may have been fixed.
+                if case .rejectedByPeer = error {
+                    self.failedConnectAt[peripheral.identifier] = Date()
                 }
                 self.lastAuthFailureDate = Date()
                 self.lastFailureWasTransport = error.isTransportLevel
