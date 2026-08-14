@@ -1,12 +1,12 @@
 # UnlockMyMac — Android peripheral
 
 Android half of a personal BLE Mac-unlock companion. The phone acts as a Bluetooth LE
-**peripheral**; a macOS menu-bar app (not in this repo yet) acts as the central. When the Mac
+**peripheral**; the macOS menu-bar app in [`../macos`](../macos) acts as the central. When the Mac
 sees the phone nearby it opens a GATT connection and asks it to sign a random challenge. Only a
 valid P-256 signature counts as proof of presence — never RSSI, never the BLE MAC address, never
 the advertised service UUID.
 
-Status: **Working end to end** against the macOS central (separate repo, `UnlockFromDroid/macos-app`).
+Status: **Working end to end** against the macOS central in [`../macos`](../macos).
 Verified on a Galaxy A56 (Android 15) + MacBook: pairing, signed challenge-response, presence
 heartbeat, lock on absence, and auto-unlock.
 
