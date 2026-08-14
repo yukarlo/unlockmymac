@@ -314,6 +314,69 @@ class GattServerController(
         }
         status.setPendingApproval(null)
         listener.onApprovalNoLongerValid()
+
+        // Push the answer rather than waiting to be asked for it. The Mac polls as a fallback, but a
+        // poll interval is added directly to the delay the user feels after tapping Approve — and if
+        // delivery of those reads stops while the link stays up, the approval is never collected at
+        // all. Measured three times: the phone recorded "approved by user" and signed nothing,
+        // because nobody ever asked again.
+        if (approved) pushSignature(pending)
+    }
+
+    /**
+     * Signs a just-approved challenge and notifies the subscribed central.
+     *
+     * Best-effort by design. Nothing here is required for correctness: the read path still serves the
+     * same signature, and [ChallengeSessions] caches it so a read arriving after this returns the
+     * identical bytes rather than signing twice. ECDSA is randomised, so signing twice for one
+     * challenge would hand out two different valid signatures — which is why the cache exists.
+     */
+    @SuppressLint("MissingPermission") // Same permissions the rest of this server already needs.
+    private fun pushSignature(pending: PendingChallenge) {
+        val server = gattServer ?: return
+        val address = pending.connectionKey
+        if (address !in subscribers) return
+
+        val device = adapterFor(address) ?: return
+        val characteristic =
+            server.getService(BleUuids.SERVICE)?.getCharacteristic(BleUuids.RESPONSE) ?: return
+
+        val tag = challengeTag(pending.request.rawPayload)
+        val signature =
+            when (val claim = sessions.claimForSigning(address)) {
+                is ChallengeSessions.Result.Cached -> claim.signature
+                is ChallengeSessions.Result.Sign ->
+                    runCatching { signer.sign(claim.pending.request.rawPayload) }
+                        .onSuccess { sessions.attachSignature(claim.pending, it) }
+                        .onFailure { eventLog.error("Signing failed for $tag: ${it.javaClass.simpleName}") }
+                        .getOrNull()
+
+                is ChallengeSessions.Result.Refused -> null
+            } ?: return
+
+        runCatching { notifyCharacteristic(server, device, characteristic, signature) }
+            .onSuccess { eventLog.info("Pushed the signature for $tag without waiting to be read") }
+            .onFailure { eventLog.warn("Could not push the signature for $tag: ${it.message}") }
+    }
+
+    /**
+     * `notifyCharacteristicChanged` moved to a value parameter in API 33; the old form is deprecated.
+     */
+    @SuppressLint("MissingPermission")
+    private fun notifyCharacteristic(
+        server: BluetoothGattServer,
+        device: BluetoothDevice,
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray,
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            server.notifyCharacteristicChanged(device, characteristic, false, value)
+        } else {
+            @Suppress("DEPRECATION")
+            characteristic.value = value
+            @Suppress("DEPRECATION")
+            server.notifyCharacteristicChanged(device, characteristic, false)
+        }
     }
 
     private val callback =
