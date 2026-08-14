@@ -12,7 +12,13 @@ class ApprovalActionReceiver : BroadcastReceiver() {
         intent: Intent,
     ) {
         val id = intent.getLongExtra(EXTRA_CHALLENGE_ID, -1L)
-        if (id < 0) return
+        if (id < 0) {
+            // Withdraw first. There is no challenge to resolve — this is the test prompt, which uses a
+            // negative id — but the notification is real, and returning without cancelling left it stuck
+            // in the shade with buttons that did nothing.
+            context.container.notifier.cancelApproval(context)
+            return
+        }
         val approved =
             when (intent.action) {
                 ACTION_APPROVE -> true
