@@ -145,14 +145,54 @@ struct KeyCodeMapper {
         }
     }
 
+    /// The active layout's `UCKeyboardLayout` blob, captured on the main thread.
+    ///
+    /// Text Input Services asserts it is called on the main thread — `TISCopyCurrentKeyboardInputSource`
+    /// traps with `EXC_BREAKPOINT` in `dispatch_assert_queue` anywhere else. The keystroke sequence
+    /// runs on a background queue, so the layout has to be fetched separately from being used.
+    ///
+    /// This only became reachable when `keyStroke(for:)` started consulting the layout *first*: with
+    /// the ANSI table tried first, every ASCII character matched before TIS was ever touched, so the
+    /// crash sat behind a path that a normal password never took. It killed the app on the first
+    /// character of the first auto-unlock.
+    ///
+    /// `UCKeyTranslate` itself only reads this blob and is safe on any thread, so caching it is all
+    /// that is needed.
+    private static let layoutLock = NSLock()
+    private nonisolated(unsafe) static var cachedLayoutData: CFData?
+
+    /// Captures the active keyboard layout. **Must be called on the main thread.**
+    ///
+    /// Call before dispatching a keystroke sequence, so the mapping reflects the layout in effect at
+    /// that moment rather than whatever was current the last time anyone asked.
+    static func refreshLayout() {
+        assert(Thread.isMainThread, "Text Input Services must be called on the main thread")
+        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let raw = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+        else { return }
+        let data = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue()
+        layoutLock.lock()
+        cachedLayoutData = data
+        layoutLock.unlock()
+    }
+
+    private static func currentLayoutData() -> CFData? {
+        layoutLock.lock()
+        let cached = cachedLayoutData
+        layoutLock.unlock()
+        if let cached { return cached }
+        // Nothing captured yet. Safe to fetch only if we happen to be on the main thread; otherwise
+        // the caller falls back to the ANSI table, which is wrong on some layouts but does not trap.
+        guard Thread.isMainThread else { return nil }
+        refreshLayout()
+        layoutLock.lock()
+        let fetched = cachedLayoutData
+        layoutLock.unlock()
+        return fetched
+    }
+
     private static func ucKeyTranslate(char: Character) -> KeyStroke? {
-        guard let inputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
-            return nil
-        }
-        guard let layoutDataRaw = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData) else {
-            return nil
-        }
-        let layoutData = Unmanaged<CFData>.fromOpaque(layoutDataRaw).takeUnretainedValue()
+        guard let layoutData = currentLayoutData() else { return nil }
         guard let keyLayoutPtr = CFDataGetBytePtr(layoutData) else {
             return nil
         }

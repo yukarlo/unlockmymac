@@ -103,6 +103,36 @@ final class KeyCodeMapperTests: XCTestCase {
         }
     }
 
+    /// The regression that killed the app on the first auto-unlock.
+    ///
+    /// `postPassword` runs on a background queue, and Text Input Services traps with
+    /// `EXC_BREAKPOINT` in `dispatch_assert_queue` if touched off the main thread. Reordering
+    /// `keyStroke(for:)` to consult the layout first made every character take that path.
+    func testMappingFromABackgroundThreadDoesNotTrap() {
+        KeyCodeMapper.refreshLayout()
+
+        let done = expectation(description: "mapped off the main thread")
+        DispatchQueue.global(qos: .userInitiated).async {
+            XCTAssertFalse(Thread.isMainThread)
+            for character in "abcXYZ019!@" {
+                _ = KeyCodeMapper.keyStroke(for: character)
+            }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+    }
+
+    /// Without a captured layout, an off-main caller must degrade to the ANSI table rather than trap.
+    func testMappingOffMainWithNoCapturedLayoutStillReturnsSomething() {
+        let done = expectation(description: "mapped without a refresh")
+        DispatchQueue.global(qos: .userInitiated).async {
+            // ASCII is in the fallback table, so this resolves either way.
+            XCTAssertNotNil(KeyCodeMapper.keyStroke(for: "a"))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+    }
+
     func testUnmappableCharacterReturnsNil() {
         // Nothing on any keyboard types this directly, so the caller must get nil and fall back
         // rather than receive a wrong key.

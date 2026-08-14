@@ -177,6 +177,11 @@ final class AutoUnlockController: ObservableObject {
         // background queue, and reaching back into the controller from there would be a race.
         let displayAwakeSince = systemActionController?.displayAwakeSince
 
+        // Capture the keyboard layout here, for the same reason and a harder one: Text Input Services
+        // traps if called off the main thread, and the mapper consults the layout for every character.
+        // Doing it now also means the layout is the one in effect at the moment of the unlock.
+        KeyCodeMapper.refreshLayout()
+
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self else { return }
 
