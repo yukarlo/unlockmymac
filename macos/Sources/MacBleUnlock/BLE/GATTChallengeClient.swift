@@ -701,6 +701,11 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             let isValid = matched != nil
             if let matched {
                 EventLogger.shared.info(category: "Auth", "Signature matched '\(matched.name)'")
+                // Which paired record answered is only knowable here, from the key that verified.
+                // Handing it upward means the rest of the app can attribute this link to a device
+                // instead of guessing from an advertised name — the peer stops advertising while
+                // connected, so for a device that advertises no name there is nothing else to go on.
+                self.bleCentral.queue.async { self.authenticatedDeviceId = matched.deviceId }
             }
 
             self.bleCentral.queue.async {

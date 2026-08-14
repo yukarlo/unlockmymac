@@ -94,8 +94,18 @@ final class StatusMenuController: NSObject {
             let discoveredValues = Array(bleCentral.discoveredPeripherals.values)
 
             for device in pairingManager.pairedDevices {
+                // The authenticated link is credited to the device that actually signed, identified by
+                // the key that verified. Testing only `authenticatedPeripheralId` here matched inside
+                // the per-device loop without ever consulting `device`, so with a phone and a watch
+                // paired, authenticating either one made *both* rows report that one's signal.
+                let isAuthenticatedDevice = stateMachine.authenticatedDeviceId.map {
+                    $0.caseInsensitiveCompare(device.deviceId) == .orderedSame
+                } ?? false
+
                 let matchingEntry = discoveredValues.first { entry in
-                    if let authId = stateMachine.authenticatedPeripheralId, entry.peripheral.identifier == authId {
+                    if isAuthenticatedDevice,
+                       let authId = stateMachine.authenticatedPeripheralId,
+                       entry.peripheral.identifier == authId {
                         return true
                     }
                     if entry.name.caseInsensitiveCompare(device.name) == .orderedSame ||

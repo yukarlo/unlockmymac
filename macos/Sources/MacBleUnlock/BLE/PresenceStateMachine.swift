@@ -70,6 +70,14 @@ final class PresenceStateMachine: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     @Published private(set) var authenticatedPeripheralId: UUID?
+
+    /// Which paired device `authenticatedPeripheralId` actually is, by `deviceId`.
+    ///
+    /// The peripheral identifier alone cannot be attributed to a paired record — addresses rotate and
+    /// are never identity — so anything wanting to say "this row is the device we are talking to"
+    /// needs this as well. Without it the status menu credited the authenticated signal to *every*
+    /// paired device, because the only test available matched the peripheral rather than the row.
+    @Published private(set) var authenticatedDeviceId: String?
     private var lastAuthFailureDate: Date?
 
     /// Whether the last failure was a link problem rather than a rejected proof.
@@ -194,6 +202,7 @@ final class PresenceStateMachine: ObservableObject {
                 self.lastFailureWasTransport = false
             }
             self.authenticatedPeripheralId = nil
+            self.authenticatedDeviceId = nil
             if self.currentState != .absent {
                 self.transitionTo(.absent)
             }
@@ -301,6 +310,7 @@ final class PresenceStateMachine: ObservableObject {
         stopHeartbeatTimer()
         resetAbsenceTimer()
         authenticatedPeripheralId = nil
+        authenticatedDeviceId = nil
         lastAuthFailureDate = nil
         lastFailureWasTransport = false
         // A refusal applies to the lock session it was given in, not the next one.
@@ -540,6 +550,7 @@ final class PresenceStateMachine: ObservableObject {
             case .success(let verified):
                 if verified {
                     self.authenticatedPeripheralId = peripheral.identifier
+                    self.authenticatedDeviceId = self.gattClient.authenticatedDeviceId
                     // Who signed is reported by the client, which learned it from the key
                     // that verified. Nothing here needs to have guessed correctly beforehand.
                     EventLogger.shared.success(category: "Auth", "Authenticated presence confirmed")
@@ -610,6 +621,7 @@ final class PresenceStateMachine: ObservableObject {
                 guard let self else { return }
                 EventLogger.shared.info(category: "State", "Phone no longer detected; will re-acquire on return")
                 self.authenticatedPeripheralId = nil
+                self.authenticatedDeviceId = nil
                 self.transitionTo(.absent)
             }
         }
@@ -689,6 +701,7 @@ final class PresenceStateMachine: ObservableObject {
             stopHeartbeatTimer()
             resetAbsenceTimer()
             authenticatedPeripheralId = nil
+            authenticatedDeviceId = nil
         }
 
         // Duplicates stay on in every state. Absence is inferred from `lastSeenAt`, which only
