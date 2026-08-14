@@ -1,0 +1,25 @@
+# Repository-wide ignores. Toolchain-specific rules that only make sense inside one project stay
+# in android/.gitignore and macos/.gitignore, so each half remains buildable on its own.
+
+.DS_Store
+
+# Anything either toolchain regenerates. Rooted patterns would miss the nested copies (android/build,
+# android/app/build, macos/build), so these are deliberately unanchored.
+build/
+.gradle/
+DerivedData/
+
+# Machine-local paths and per-user IDE state.
+local.properties
+*.iml
+xcuserdata/
+*.xcuserstate
+
+# The IDE config that is shared lives in /.idea, so the monorepo root is the project root. Opening
+# android/ directly in Android Studio makes it write a second, competing .idea there — anchored so
+# only the nested copies are ignored and the tracked root one is untouched.
+/android/.idea/
+/macos/.idea/
+
+# Which device you last deployed to. Pure machine state, and it has changed on almost every build.
+/.idea/deploymentTargetSelector.xml
