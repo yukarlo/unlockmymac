@@ -565,6 +565,17 @@ extension GATTChallengeClient: CBPeripheralDelegate {
         }
 
         self.responseCharacteristic = responseCharacteristic
+
+        // Subscribe before writing the challenge, so a peripheral that signs immediately cannot push
+        // before we are listening. Notifying is how an approval reaches us without being polled for:
+        // the read path stays as the fallback, so a peripheral that does not support notify — or a
+        // subscription the stack refuses — costs nothing but the old behaviour.
+        if responseCharacteristic.properties.contains(.notify) {
+            peripheral.setNotifyValue(true, for: responseCharacteristic)
+        } else {
+            log.notice("Peripheral does not offer response notifications; polling only")
+        }
+
         log.notice("Writing structured challenge payload")
         peripheral.writeValue(payload, for: challengeCharacteristic, type: .withResponse)
     }
@@ -607,6 +618,19 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             return paired.name
         }
         return "paired device"
+    }
+
+    /// Reports whether the subscription took, so a silent failure does not look like a slow peer.
+    ///
+    /// Not fatal either way: the poll below is the fallback, so a refused subscription only costs the
+    /// old behaviour rather than the unlock.
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard peripheral === activePeripheral, characteristic.uuid == BLEProtocol.responseCharacteristicUUID else { return }
+        if let error {
+            log.notice("Could not subscribe to response notifications, will poll instead: \(error.localizedDescription, privacy: .public)")
+        } else if characteristic.isNotifying {
+            log.notice("Subscribed to response notifications; an approval will be pushed rather than polled for")
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
@@ -676,7 +700,11 @@ extension GATTChallengeClient: CBPeripheralDelegate {
             return
         }
 
-        log.notice("Received \(signatureData.count)-byte ECDSA signature, verifying...")
+        // `isNotifying` tells the two apart: a push arrives unsolicited on a subscribed
+        // characteristic, a read reply arrives because we asked. Worth separating in the log — the
+        // whole point of the push is that it works when reads are not being delivered.
+        let arrival = characteristic.isNotifying ? "pushed" : "read"
+        log.notice("Received \(signatureData.count)-byte ECDSA signature (\(arrival, privacy: .public)), verifying...")
 
         // Verify against every authorised device, not just the one the challenge named.
         //
