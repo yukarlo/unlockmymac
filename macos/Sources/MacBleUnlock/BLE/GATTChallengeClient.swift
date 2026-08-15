@@ -116,11 +116,12 @@ final class GATTChallengeClient: NSObject {
     var isBusy: Bool {
         bleCentral.queue.sync { activePeripheral != nil }
     }
+
     private var responseCharacteristic: CBCharacteristic?
     private var activeRequestPayload: Data?
     private var completion: Completion?
     private var timeoutWorkItem: DispatchWorkItem?
-    private var isApprovalPending = false
+    private var isApprovalPendingFlag = false
 
     /// When the phone first answered "waiting on the user", used to pace the re-reads.
     private var approvalPendingSince: Date?
@@ -216,7 +217,17 @@ final class GATTChallengeClient: NSObject {
     ///
     /// Long enough to stop competing with the push, short enough that the watchdog below still
     /// notices a stalled link within a few seconds rather than at the 60 s timeout.
-    private static let approvalPushKeepaliveInterval: TimeInterval = 3.0
+    ///
+    /// 1.5s, down from 3s. The 3s was set to keep the keepalive from racing the push for the
+    /// signature, and that hazard is gone: the peripheral now answers the loser of that race with
+    /// `SIGNING_IN_PROGRESS` and serves it the cached signature, instead of the 0x81 that used to
+    /// throw a live approval away. What is left is the cost of *not* reading — this interval is
+    /// what sets how long a stalled link goes unnoticed. Measured 18:02:03 on 2026-08-15, a stall
+    /// took 11.7s to spot and 17.1s to give up on, and every one of those seconds was spent on a
+    /// dead connection while the lock screen counted down to its own 30s display timeout. Halving
+    /// this halves the detection latency for about seven round trips per approval — against the
+    /// 40 the old 250ms poll spent.
+    private static let approvalPushKeepaliveInterval: TimeInterval = 1.5
 
     /// How long past a scheduled read to wait before assuming its reply is not coming.
     ///
@@ -234,6 +245,15 @@ final class GATTChallengeClient: NSObject {
     /// the time the replacement handshake was up the Mac's 30s lock-screen display timeout left it
     /// 2.3s to live. The approval landed 233ms before the display slept and was thrown away.
     private static let maxApprovalReadRetries = 1
+
+    /// Budget for the peer's *first* word after the challenge write, before the grace is added.
+    ///
+    /// Larger than the grace alone because this read is doing more than the polls that follow: the
+    /// peripheral has to parse the challenge, decide whether approval is required, and either sign
+    /// or answer 0x80. Healthy first replies in these logs land in 200ms–1.1s, so 1.5s plus the 2s
+    /// grace leaves ample headroom while still catching a dead link in about a third of the time
+    /// `authTimeoutSeconds` took.
+    private static let firstReadWatchdogDelay: TimeInterval = 1.5
 
     init(bleCentral: BLECentralManager, pairingManager: PairingManager) {
         self.bleCentral = bleCentral
@@ -432,9 +452,15 @@ final class GATTChallengeClient: NSObject {
         approvalReadWatchdog?.cancel()
 
         let item = DispatchWorkItem { [weak self] in
+            // `readOutstanding`, not `isApprovalPendingFlag`. The flag was the wrong test twice
+            // over: it is false before the first 0x80, so the read issued straight after the
+            // challenge write could not be watched at all — a stall there fell through to the
+            // generic `authTimeoutSeconds`, which is where "Timed out waiting for a response"
+            // with no explanation came from. And it stays true after a reply has arrived, so it
+            // said nothing about whether *this* read is the one still unanswered.
             guard let self,
                   self.activePeripheral === peripheral,
-                  self.isApprovalPending else { return }
+                  self.readOutstanding else { return }
 
             self.approvalReadRetries += 1
 
@@ -503,7 +529,7 @@ final class GATTChallengeClient: NSObject {
         activePeripheral = nil
         responseCharacteristic = nil
         activeRequestPayload = nil
-        isApprovalPending = false
+        isApprovalPendingFlag = false
         approvalPendingSince = nil
         completion = nil
         peripheral.delegate = nil
@@ -642,6 +668,16 @@ extension GATTChallengeClient: CBPeripheralDelegate {
         }
         log.notice("Challenge payload written, reading response signature")
         issueRead(peripheral, responseCharacteristic)
+        // Watch this read like any other. Until now only a 0x80 armed a watchdog, so a link that
+        // stalled before its first reply was caught by nothing but the 12s `authTimeoutSeconds` —
+        // 12 seconds of a locked screen spent on a connection already known to be dead, and a
+        // failure reported as a bare timeout. `firstReadWatchdogDelay` rather than the poll
+        // cadence: nothing is being polled yet, this is a one-shot wait for the peer's first word.
+        armApprovalReadWatchdog(
+            after: Self.firstReadWatchdogDelay,
+            peripheral: peripheral,
+            characteristic: responseCharacteristic
+        )
     }
 
     private func targetDeviceName(for peripheral: CBPeripheral) -> String {
@@ -691,8 +727,8 @@ extension GATTChallengeClient: CBPeripheralDelegate {
                 EventLogger.shared.info(category: "Unlock", "Waiting for you to approve on \(deviceName)…")
 
                 // Arm 60s approval timeout once when approval pending is first encountered
-                if !isApprovalPending {
-                    isApprovalPending = true
+                if !isApprovalPendingFlag {
+                    isApprovalPendingFlag = true
                     approvalPendingSince = Date()
                     extendTimeoutForUserApproval()
                 }
