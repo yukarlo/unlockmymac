@@ -153,11 +153,6 @@ final class AutoUnlockController: ObservableObject {
             return
         }
 
-        guard let password = KeychainManager.getPassword(), !password.isEmpty else {
-            EventLogger.shared.warning(category: "AutoUnlock", "Auto-unlock failed: No password stored in Keychain")
-            return
-        }
-
         // Bounded attempts per lock session.
         if attemptsThisLockSession >= Self.maxAttemptsPerLockSession {
             EventLogger.shared.info(
@@ -184,6 +179,24 @@ final class AutoUnlockController: ObservableObject {
 
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self else { return }
+
+            // Read here, not in the guards above, because this call can block for a long time.
+            //
+            // Measured 2026-08-15 17:36:16: with the display asleep, `SecItemCopyMatching` sat for
+            // **48.9 seconds** and only returned when a key press roused the system — on the main
+            // thread, inside this method, before it had logged anything. The approval had already
+            // been collected and verified; the unlock simply waited. The next attempt was instant,
+            // because by then the keychain was unlocked, which is why this hid until an approval
+            // was allowed to complete on a dark display.
+            guard let password = KeychainManager.getPassword(), !password.isEmpty else {
+                EventLogger.shared.warning(
+                    category: "AutoUnlock",
+                    "Auto-unlock failed: No password stored in Keychain"
+                )
+                // Nothing was typed, so this is not a spent password guess.
+                DispatchQueue.main.async { self.lastAttemptDate = nil }
+                return
+            }
 
             // Step 1: Send Escape to wake display & clear screen saver / clock without inserting text
             self.postVirtualKey(Self.keyEscape)
