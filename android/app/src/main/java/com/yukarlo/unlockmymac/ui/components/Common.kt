@@ -24,6 +24,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -290,3 +291,53 @@ fun formatTimestamp(
     atMs: Long?,
     fallback: String,
 ): String = if (atMs == null || atMs <= 0L) fallback else timeFormat.format(Date(atMs))
+
+/**
+ * A row that performs an action rather than holding a state.
+ *
+ * The visual sibling of [SettingRow], deliberately without a switch: these open a screen or fire a
+ * one-shot, and a switch would imply something is being remembered. Used for handing off to Android's
+ * own settings and for previewing the approval banner.
+ */
+@Composable
+fun ActionRow(
+    title: String,
+    description: String?,
+    icon: ImageVector? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onClick)
+                .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (description != null) {
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}

@@ -188,6 +188,10 @@ class HomeViewModel(
         viewModelScope.launch { container.settings.setRequireApproval(required) }
     }
 
+
+
+
+
     fun setBalancedAdvertising(balanced: Boolean) {
         viewModelScope.launch {
             container.settings.setAdvertiseMode(

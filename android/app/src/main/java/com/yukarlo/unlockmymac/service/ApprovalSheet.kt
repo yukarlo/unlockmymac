@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -39,12 +40,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.util.lerp
 import com.yukarlo.unlockmymac.R
+import com.yukarlo.unlockmymac.container
 import kotlinx.coroutines.delay
 
 /** Drag down past this, or fling down faster than [flingVelocity], to dismiss. */
@@ -122,6 +125,15 @@ internal fun ApprovalSheet(
     onDismiss: () -> Unit,
     onOpenApp: () -> Unit,
 ) {
+    // Read here rather than passed in, so a toggle flipped in the app takes effect on the card that is
+    // already on screen — which is what makes the preview a preview rather than a screenshot. Null until
+    // the first emission, and every gesture is read as enabled in that window, matching the defaults.
+    val settings by LocalContext.current.container.settings.settings
+        .collectAsState(initial = null)
+    val swipeUpOpensApp = settings?.bannerSwipeUpOpensApp != false
+    val swipeDownDismisses = settings?.bannerSwipeDownDismisses != false
+    val scrimTapDismisses = settings?.bannerScrimTapDismisses != false
+
     val density = LocalDensity.current
     val dismissPx = with(density) { dismissDistance.toPx() }
     val openAppPx = with(density) { openAppDistance.toPx() }
@@ -199,7 +211,17 @@ internal fun ApprovalSheet(
                     .background(Color.Black.copy(alpha = scrimOpacity * revealProgress * (1f - expansion)))
                     // Tap to put away without answering — the same outcome as a swipe down. Consuming
                     // taps here is what makes the window modal; see the class comment.
-                    .pointerInput(Unit) { detectTapGestures { onDismiss() } },
+                    //
+                    // The modifier is omitted entirely when the setting is off rather than given an
+                    // empty callback: an empty tap handler still consumes the touch, which would leave
+                    // the scrim swallowing taps and doing nothing with them.
+                    .then(
+                        if (scrimTapDismisses) {
+                            Modifier.pointerInput(Unit) { detectTapGestures { onDismiss() } }
+                        } else {
+                            Modifier
+                        },
+                    ),
         )
 
         Surface(
@@ -230,23 +252,36 @@ internal fun ApprovalSheet(
                     }.draggable(
                         orientation = Orientation.Vertical,
                         // Once the expansion starts the gesture is over and its outcome is decided;
-                        // further drag would fight the animation.
-                        enabled = expansion == 0f,
+                        // further drag would fight the animation. Also off when neither direction is
+                        // configured to do anything, so the card does not rubber-band pointlessly.
+                        enabled = expansion == 0f && (swipeUpOpensApp || swipeDownDismisses),
                         state =
                             rememberDraggableState { delta ->
                                 val next = dragPx + delta
-                                // Downward is free; upward is damped and capped.
+                                // Downward is free; upward is damped and capped. A direction that is
+                                // switched off does not move at all — following the finger towards an
+                                // outcome that will not happen promises something the release cannot
+                                // deliver.
                                 dragPx =
-                                    if (next >= 0f) {
-                                        next
-                                    } else {
-                                        (dragPx + delta * upwardDragDamping)
-                                            .coerceAtLeast(-upLimitPx)
+                                    when {
+                                        next >= 0f -> {
+                                            if (swipeDownDismisses) next else 0f
+                                        }
+
+                                        !swipeUpOpensApp -> {
+                                            0f
+                                        }
+
+                                        else -> {
+                                            (dragPx + delta * upwardDragDamping)
+                                                .coerceAtLeast(-upLimitPx)
+                                        }
                                     }
                             },
                         onDragStopped = { velocity ->
                             when {
-                                dragPx > dismissPx || velocity > flingVelocity -> {
+                                swipeDownDismisses &&
+                                    (dragPx > dismissPx || velocity > flingVelocity) -> {
                                     // Dismissal is the entrance in reverse: run the reveal back to zero
                                     // and the card slides off the bottom and fades as it goes. Needs no
                                     // measured height, and reports only once it has left rather than
@@ -259,7 +294,8 @@ internal fun ApprovalSheet(
                                     onDismiss()
                                 }
 
-                                dragPx < -openAppPx || velocity < -flingVelocity -> {
+                                swipeUpOpensApp &&
+                                    (dragPx < -openAppPx || velocity < -flingVelocity) -> {
                                     // Grow into the screen first, and settle back to zero offset while
                                     // doing it, so the card is exactly full-screen when it hands over.
                                     val from = dragPx
@@ -306,22 +342,25 @@ internal fun ApprovalSheet(
                         .graphicsLayer { alpha = (1f - expansion * 2.2f).coerceIn(0f, 1f) }
                         .padding(start = 24.dp, end = 24.dp, top = 14.dp, bottom = 22.dp),
             ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    // The grabber is honest: the card really is draggable, in both directions.
-                    Spacer(
-                        Modifier
-                            .size(width = 36.dp, height = 4.dp)
-                            .background(
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                CircleShape,
-                            ),
-                    )
+                // Only when the card can actually be dragged. An affordance for a gesture that has
+                // been switched off is worse than none — the same reason it was dropped when the card
+                // was not draggable at all.
+                if (swipeUpOpensApp || swipeDownDismisses) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Spacer(
+                            Modifier
+                                .size(width = 36.dp, height = 4.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                    CircleShape,
+                                ),
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
                 }
-
-                Spacer(Modifier.height(16.dp))
 
                 Text(
                     text = stringResource(R.string.overlay_title),

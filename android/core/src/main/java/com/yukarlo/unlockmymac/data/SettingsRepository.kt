@@ -58,6 +58,20 @@ class AppSettings(
     val requireApproval: Boolean,
     val advertiseMode: AdvertiseMode,
     val deviceName: String,
+    /**
+     * Whether an approval request also raises the floating banner over whatever is on screen.
+     *
+     * Defaults on: it is the surface that makes an approval answerable in one tap without hunting
+     * through the shade. Off leaves the notification, which is the surface that always exists — so
+     * turning this off degrades the experience rather than breaking it.
+     */
+    val approvalBannerEnabled: Boolean,
+    /** Swipe the banner up to open the app. */
+    val bannerSwipeUpOpensApp: Boolean,
+    /** Swipe the banner down to put it away without answering. */
+    val bannerSwipeDownDismisses: Boolean,
+    /** Tap the dimmed background to put the banner away without answering. */
+    val bannerScrimTapDismisses: Boolean,
 ) {
     /** Advertising should only run when the user has enabled the service and not paused it. */
     val shouldAdvertise: Boolean get() = serviceEnabled && !paused
@@ -83,6 +97,10 @@ class SettingsRepository(
                 requireApproval = prefs[REQUIRE_APPROVAL] ?: false,
                 advertiseMode = AdvertiseMode.fromStored(prefs[ADVERTISE_MODE], defaultAdvertiseMode),
                 deviceName = prefs[DEVICE_NAME] ?: android.os.Build.MODEL ?: "Android",
+                approvalBannerEnabled = prefs[APPROVAL_BANNER] ?: true,
+                bannerSwipeUpOpensApp = prefs[BANNER_SWIPE_UP] ?: true,
+                bannerSwipeDownDismisses = prefs[BANNER_SWIPE_DOWN] ?: true,
+                bannerScrimTapDismisses = prefs[BANNER_SCRIM_TAP] ?: true,
             )
         }
 
@@ -99,6 +117,14 @@ class SettingsRepository(
 
     suspend fun setAdvertiseMode(mode: AdvertiseMode) = edit { it[ADVERTISE_MODE] = mode.name }
 
+    suspend fun setApprovalBannerEnabled(enabled: Boolean) = edit { it[APPROVAL_BANNER] = enabled }
+
+    suspend fun setBannerSwipeUpOpensApp(enabled: Boolean) = edit { it[BANNER_SWIPE_UP] = enabled }
+
+    suspend fun setBannerSwipeDownDismisses(enabled: Boolean) = edit { it[BANNER_SWIPE_DOWN] = enabled }
+
+    suspend fun setBannerScrimTapDismisses(enabled: Boolean) = edit { it[BANNER_SCRIM_TAP] = enabled }
+
     suspend fun setDeviceName(name: String) =
         edit {
             it[DEVICE_NAME] = name.trim().take(64).ifEmpty { android.os.Build.MODEL ?: "Android" }
@@ -112,6 +138,10 @@ class SettingsRepository(
         val SERVICE_ENABLED = booleanPreferencesKey("service_enabled")
         val PAUSED = booleanPreferencesKey("paused")
         val REQUIRE_APPROVAL = booleanPreferencesKey("require_approval")
+        val APPROVAL_BANNER = booleanPreferencesKey("approval_banner_enabled")
+        val BANNER_SWIPE_UP = booleanPreferencesKey("banner_swipe_up_opens_app")
+        val BANNER_SWIPE_DOWN = booleanPreferencesKey("banner_swipe_down_dismisses")
+        val BANNER_SCRIM_TAP = booleanPreferencesKey("banner_scrim_tap_dismisses")
         val ADVERTISE_MODE = stringPreferencesKey("advertise_mode")
         val DEVICE_NAME = stringPreferencesKey("device_name")
     }

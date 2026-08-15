@@ -79,6 +79,7 @@ import com.yukarlo.unlockmymac.util.OnResume
 @Composable
 fun HomeScreen(
     onPair: () -> Unit,
+    onAlerts: () -> Unit,
     onDiagnostics: () -> Unit,
     viewModel: HomeViewModel = viewModel(),
 ) {
@@ -143,11 +144,6 @@ fun HomeScreen(
                                 onPair()
                             },
                         )
-                        // Opens Android's own settings for the approval channel rather than
-                        // offering switches here. Vibration and lights belong to the channel, and
-                        // since API 26 a channel's settings are the user's — an app cannot change
-                        // them after creation, and `setLights` has been ignored since the same
-                        // release. In-app toggles would either do nothing or fight the channel.
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.home_notification_settings_button)) },
                             leadingIcon = {
@@ -158,7 +154,7 @@ fun HomeScreen(
                             },
                             onClick = {
                                 showMenu = false
-                                openApprovalChannelSettings(context)
+                                onAlerts()
                             },
                         )
                         DropdownMenuItem(

@@ -247,7 +247,13 @@ class BleUnlockService :
 
         // Raised before the notification-permission gate: the overlay is a separate surface with its
         // own permission, so a user who refused notifications but allowed the overlay still gets asked.
-        container.notifier.showApprovalOverlay(this, pending.id, pairedMacName)
+        //
+        // `!= false` rather than `== true`: settings arrive asynchronously and are null until the first
+        // emission. A request landing in that window should still raise the banner, because the setting
+        // defaults on — reading null as "off" would silently drop the prompt right after a restart.
+        if (settings?.approvalBannerEnabled != false) {
+            container.notifier.showApprovalOverlay(this, pending.id, pairedMacName)
+        }
 
         if (!BlePermissions.hasNotifications(this)) {
             // Without POST_NOTIFICATIONS the overlay and the in-app card are the only surfaces.
