@@ -225,9 +225,15 @@ class BleUnlockService :
                 expiresAtElapsedMs = pending.expiresAtElapsedMs,
             ),
         )
+        // Raised before the notification-permission gate: the overlay is a separate surface with its
+        // own permission, so a user who refused notifications but allowed the overlay still gets asked.
+        container.notifier.showApprovalOverlay(this, pending.id, pairedMacName)
+
         if (!BlePermissions.hasNotifications(this)) {
-            // Without POST_NOTIFICATIONS the in-app card is the only approval surface.
+            // Without POST_NOTIFICATIONS the overlay and the in-app card are the only surfaces.
             appContainer.eventLog.warn("Approval needed for $tag (no notification permission)")
+            promptedChallengeId = pending.id
+            ApprovalMirror.broadcastRequest(this, pending.id, pairedMacName)
             return
         }
         NotificationManagerCompat.from(this).notify(
@@ -278,6 +284,7 @@ class BleUnlockService :
     override fun onApprovalNoLongerValid() {
         appContainer.status.setPendingApproval(null)
         container.notifier.cancelApproval(this)
+        container.notifier.hideApprovalOverlay(this)
         // Whether answered, expired or swept, the copy on the other device is now stale.
         promptedChallengeId?.let { ApprovalMirror.broadcastDismiss(this, it) }
         promptedChallengeId = null
