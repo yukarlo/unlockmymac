@@ -43,6 +43,7 @@ class MirroredApprovalReceiver : WearableListenerService() {
 
             ApprovalMirror.PATH_DISMISS -> {
                 container.notifier.cancelApproval(this)
+                container.notifier.hideApprovalOverlay(this)
                 // Cancelling the notification does nothing to a full-screen approval activity,
                 // so tell it too. Omitting this left the watch showing an answered question.
                 ApprovalMirror.markDismissed(messageEvent.sourceNodeId, challengeId)
@@ -68,8 +69,13 @@ class MirroredApprovalReceiver : WearableListenerService() {
         challengeId: Long,
         body: JSONObject,
     ) {
-        if (!BlePermissions.hasNotifications(this)) return
         val macName = body.optString("macName").ifBlank { null }
+
+        // A mirrored prompt gets the overlay too — it is the same question, just about the other
+        // device's challenge, and the actions carry `originNodeId` so the answer goes back there.
+        container.notifier.showApprovalOverlay(this, challengeId, macName, sourceNodeId)
+
+        if (!BlePermissions.hasNotifications(this)) return
         NotificationManagerCompat.from(this).notify(
             container.notifier.approvalNotificationId,
             container.notifier.approvalRequest(

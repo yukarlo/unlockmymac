@@ -39,4 +39,24 @@ interface UnlockNotifier {
     ): Notification
 
     fun cancelApproval(context: Context)
+
+    /**
+     * Optionally raises a richer prompt than a notification, over whatever is on screen.
+     *
+     * Default no-op: the notification is the contract, and every form factor has one. The phone adds
+     * a bottom-sheet overlay on top of it; the watch already puts its prompt full screen and needs
+     * nothing here.
+     *
+     * Additive by design, exactly like the approval mirror. The notification is still posted either
+     * way, because an overlay cannot be drawn over the keyguard — a locked phone sees only the
+     * notification, and that is the common case when the Mac is being unlocked.
+     */
+    fun showApprovalOverlay(
+        context: Context,
+        challengeId: Long,
+        macName: String?,
+        originNodeId: String? = null,
+    ) = Unit
+
+    fun hideApprovalOverlay(context: Context) = Unit
 }
