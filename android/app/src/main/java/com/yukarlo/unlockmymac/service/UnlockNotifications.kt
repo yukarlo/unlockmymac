@@ -94,6 +94,15 @@ object UnlockNotifications : UnlockNotifier {
             ).build()
     }
 
+    override fun showApprovalOverlay(
+        context: Context,
+        challengeId: Long,
+        macName: String?,
+        originNodeId: String?,
+    ) = ApprovalOverlay.show(context, challengeId, macName, originNodeId)
+
+    override fun hideApprovalOverlay(context: Context) = ApprovalOverlay.hide(context)
+
     override fun cancelApproval(context: Context) {
         NotificationManagerCompat.from(context).cancel(APPROVAL_NOTIFICATION_ID)
     }

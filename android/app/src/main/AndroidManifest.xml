@@ -16,6 +16,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Draws the approval prompt as a bottom sheet over whatever is on screen. A special per-app
+         toggle, not a runtime dialog, so the app has to send the user to Settings for it. Additive:
+         without it the approval notification is unchanged, and it cannot cover the lock screen
+         either way. Play policy restricts this permission; this is a personal sideloaded build. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <!-- Used only by the pairing screen to scan the Mac's QR code. -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <!-- Restart the peripheral after a reboot or an app update. -->

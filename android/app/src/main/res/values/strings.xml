@@ -13,6 +13,13 @@
     <string name="action_approve">Approve</string>
     <string name="action_deny">Deny</string>
 
+    <!-- Approval overlay -->
+    <string name="overlay_title">Unlock your Mac?</string>
+    <string name="overlay_body">A paired Mac is asking to unlock.</string>
+    <string name="overlay_body_named">%1$s is asking to unlock.</string>
+    <string name="overlay_approve">Approve</string>
+    <string name="overlay_deny">Deny</string>
+
     <!-- Quick Settings tile -->
     <string name="tile_label">Mac unlock</string>
     <string name="tile_state_on">Discoverable</string>
