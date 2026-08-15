@@ -1,7 +1,6 @@
 package com.yukarlo.unlockmymac.service
 
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -32,10 +31,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -48,17 +45,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.util.lerp
 import com.yukarlo.unlockmymac.R
-import kotlinx.coroutines.flow.first
-import kotlin.math.min
+import kotlinx.coroutines.delay
 
 /** Drag down past this, or fling down faster than [flingVelocity], to dismiss. */
-private val dismissDistance = 88.dp
+private val dismissDistance = 64.dp
 
 /** Drag up past this, or fling up faster than [flingVelocity], to open the app. */
 private val openAppDistance = 56.dp
-
-/** Share of the card's own height that also counts as "dragged far enough to dismiss". */
-private const val dismissHeightFraction = 0.28f
 
 /** px/s at which a flick decides the gesture regardless of how far it travelled. */
 private const val flingVelocity = 700f
@@ -79,6 +72,14 @@ private val restingGutter = 12.dp
 private val restingCorner = 28.dp
 
 private const val scrimOpacity = 0.45f
+
+/**
+ * How long to wait for the entrance animation before showing the card without it.
+ *
+ * Comfortably longer than the 240 ms entrance, short enough that a prompt is never lost. A prompt that
+ * arrives late still beats one that never arrives.
+ */
+private const val REVEAL_WATCHDOG_MS = 600L
 
 /**
  * The approval prompt: a floating banner that can expand into the app.
@@ -137,51 +138,55 @@ internal fun ApprovalSheet(
     // release. Animations write it too, via `animate`, and a new drag cancels a running release because
     // `draggable` cancels the previous `onDragStopped` — so the finger always wins, from wherever the
     // card actually is.
-    var translationYPx by remember { mutableFloatStateOf(0f) }
+    var dragPx by remember { mutableFloatStateOf(0f) }
 
     /** 0 at rest, 1 when the card fills the screen. Drives gutter, corners, height and content fade. */
     var expansion by remember { mutableFloatStateOf(0f) }
 
-    // Needed to rise from exactly off-screen and to leave the same way, rather than from a guessed
-    // distance that would either start visible or overshoot and waste time.
+    /** The card's measured height, used only to expand it to full screen. Never gates visibility. */
     var cardHeightPx by remember { mutableFloatStateOf(0f) }
 
-    /** True between finger down and finger up, so the entrance animation can stand aside. */
-    var dragging by remember { mutableStateOf(false) }
-
-    // Whichever is nearer: a fixed distance, or a share of the card. Fixed alone was measured against a
-    // card that turned out to be ~210dp tall, making [dismissDistance] about 42% of it — a long way to
-    // drag something that only has to be put away, and reported as a swipe that would not dismiss.
-    val dismissThresholdPx =
-        if (cardHeightPx > 0f) min(dismissPx, cardHeightPx * dismissHeightFraction) else dismissPx
-
-    // The entrance runs off the same offset the drag uses, so a swipe that arrives mid-entrance
-    // continues from wherever the card actually is instead of jumping to meet the finger.
-    //
-    // Keyed on `Unit`, and waiting for the height from inside rather than being keyed on it. That is the
-    // whole point: the height arrives as a sequence, not a value, because the card is measured more than
-    // once. Keyed on `cardHeightPx` this effect was cancelled and restarted by the second measurement —
-    // the restart found `entered` already true, skipped the body, and left the card parked off-screen.
-    var entered by remember { mutableStateOf(false) }
+    /**
+     * 0 = off the bottom and transparent, 1 = in place and opaque. Runs forwards to appear, backwards to
+     * dismiss.
+     *
+     * The entrance no longer waits to be told how tall the card is, and that is the point. It used to:
+     * `snapshotFlow { cardHeightPx }.first { it > 0f }` gated *both* the slide and the alpha, so if that
+     * handshake ever failed the card stayed at `alpha = 0` — window attached, full-screen, laid out,
+     * drawing nothing. Which is exactly the intermittent report: window added and measured 1248x1933,
+     * up for 4.6 s, and only the notification seen. It fired on two prompts and not the third with no
+     * other difference between them.
+     *
+     * Now the reveal is a plain time animation with no inputs, and the offset it needs comes from
+     * `size.height` inside the `graphicsLayer` below — a value the layer always has at draw time. There
+     * is no longer a state handshake that can be lost.
+     *
+     * It is still an *animation*, though, and that is its own hazard: an animation needs a frame clock,
+     * and a `ComposeView` in a `WindowManager` window gets its clock from a recomposer this code does not
+     * own. If that clock never ticks, `animate` never runs its callback and the card stays at progress 0
+     * — laid out at 1248x1933 and drawing nothing. So the watchdog below is not decoration; it is what
+     * stops "the animation did not start" from meaning "the prompt was never shown".
+     */
+    var revealProgress by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(Unit) {
-        val height = snapshotFlow { cardHeightPx }.first { it > 0f }
-        translationYPx = height
-        // Revealed only now, with the card already off the bottom. Before this it is transparent, so the
-        // frames between first composition and a known height are not seen at the final position.
-        entered = true
-        animate(initialValue = height, targetValue = 0f, animationSpec = tween(240)) { value, _ ->
-            // Stands aside if the user grabbed the card mid-rise. This effect is not cancelled by a
-            // drag — it is keyed on `Unit` deliberately — so without the guard the entrance and the
-            // finger would write the same state in alternate frames and the card would judder.
-            if (!dragging) translationYPx = value
+        animate(initialValue = 0f, targetValue = 1f, animationSpec = tween(240)) { value, _ ->
+            revealProgress = value
         }
     }
 
-    val revealed by animateFloatAsState(
-        targetValue = if (entered) 1f else 0f,
-        animationSpec = tween(240),
-        label = "approvalBannerReveal",
-    )
+    // `delay` is driven by the dispatcher's `Handler`, not by the frame clock, so this fires even when
+    // the clock that `animate` above depends on is stuck. Visibility is the thing that matters; the slide
+    // is not. If the animation has not moved by now, put the card on screen without it.
+    LaunchedEffect(Unit) {
+        delay(REVEAL_WATCHDOG_MS)
+        if (revealProgress == 0f) {
+            android.util.Log.w(
+                "ApprovalSheet",
+                "Reveal animation never ran; showing the card without it (no frame clock)",
+            )
+            revealProgress = 1f
+        }
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val fullHeightPx = with(density) { maxHeight.toPx() }
@@ -191,7 +196,7 @@ internal fun ApprovalSheet(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = scrimOpacity * revealed * (1f - expansion)))
+                    .background(Color.Black.copy(alpha = scrimOpacity * revealProgress * (1f - expansion)))
                     // Tap to put away without answering — the same outcome as a swipe down. Consuming
                     // taps here is what makes the window modal; see the class comment.
                     .pointerInput(Unit) { detectTapGestures { onDismiss() } },
@@ -217,8 +222,11 @@ internal fun ApprovalSheet(
                     // `graphicsLayer`, not `offset`: a draw-time transform, so dragging cannot trigger a
                     // layout pass. Alpha is folded in rather than stacking a second layer.
                     .graphicsLayer {
-                        translationY = translationYPx
-                        alpha = revealed
+                        // `size.height` is the card's own height at draw time, so the off-screen
+                        // distance never has to be measured, published and read back. That round trip
+                        // is what could silently fail and leave the card drawing nothing.
+                        translationY = dragPx + (1f - revealProgress) * size.height
+                        alpha = revealProgress
                     }.draggable(
                         orientation = Orientation.Vertical,
                         // Once the expansion starts the gesture is over and its outcome is decided;
@@ -226,45 +234,42 @@ internal fun ApprovalSheet(
                         enabled = expansion == 0f,
                         state =
                             rememberDraggableState { delta ->
-                                val next = translationYPx + delta
+                                val next = dragPx + delta
                                 // Downward is free; upward is damped and capped.
-                                translationYPx =
+                                dragPx =
                                     if (next >= 0f) {
                                         next
                                     } else {
-                                        (translationYPx + delta * upwardDragDamping)
+                                        (dragPx + delta * upwardDragDamping)
                                             .coerceAtLeast(-upLimitPx)
                                     }
                             },
-                        onDragStarted = { dragging = true },
                         onDragStopped = { velocity ->
-                            dragging = false
                             when {
-                                translationYPx > dismissThresholdPx || velocity > flingVelocity -> {
-                                    // All the way off the bottom first, *then* report. Tearing the
-                                    // window down on the upstroke makes the card vanish rather than
-                                    // leave.
+                                dragPx > dismissPx || velocity > flingVelocity -> {
+                                    // Dismissal is the entrance in reverse: run the reveal back to zero
+                                    // and the card slides off the bottom and fades as it goes. Needs no
+                                    // measured height, and reports only once it has left rather than
+                                    // vanishing on the upstroke.
                                     animate(
-                                        initialValue = translationYPx,
-                                        targetValue =
-                                            cardHeightPx.takeIf { it > 0f }
-                                                ?: (dismissPx * 3f),
+                                        initialValue = revealProgress,
+                                        targetValue = 0f,
                                         animationSpec = tween(180),
-                                    ) { value, _ -> translationYPx = value }
+                                    ) { value, _ -> revealProgress = value }
                                     onDismiss()
                                 }
 
-                                translationYPx < -openAppPx || velocity < -flingVelocity -> {
+                                dragPx < -openAppPx || velocity < -flingVelocity -> {
                                     // Grow into the screen first, and settle back to zero offset while
                                     // doing it, so the card is exactly full-screen when it hands over.
-                                    val from = translationYPx
+                                    val from = dragPx
                                     animate(
                                         initialValue = 0f,
                                         targetValue = 1f,
                                         animationSpec = tween(260),
                                     ) { value, _ ->
                                         expansion = value
-                                        translationYPx = lerp(from, 0f, value)
+                                        dragPx = lerp(from, 0f, value)
                                     }
                                     // Only now: the activity fades in over a full-screen surface of its
                                     // own colour, so the hand-over reads as the card becoming the app
@@ -274,10 +279,10 @@ internal fun ApprovalSheet(
 
                                 else -> {
                                     animate(
-                                        initialValue = translationYPx,
+                                        initialValue = dragPx,
                                         targetValue = 0f,
                                         animationSpec = spring(),
-                                    ) { value, _ -> translationYPx = value }
+                                    ) { value, _ -> dragPx = value }
                                 }
                             }
                         },

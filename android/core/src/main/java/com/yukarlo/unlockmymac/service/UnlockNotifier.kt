@@ -59,4 +59,16 @@ interface UnlockNotifier {
     ) = Unit
 
     fun hideApprovalOverlay(context: Context) = Unit
+
+    /**
+     * Alerts for an approval request that is being shown *without* a notification.
+     *
+     * The notification carried the sound. Suppressing it while the app is on screen took the sound with
+     * it, and an approval request is time-boxed — a silent card is one the user can miss while looking at
+     * something else on the same screen.
+     *
+     * Only called on that path, so it can never double up with a notification's own sound. Default
+     * no-op: the watch has its own prompt and never suppresses a notification in favour of a card.
+     */
+    fun playApprovalAlert(context: Context) = Unit
 }

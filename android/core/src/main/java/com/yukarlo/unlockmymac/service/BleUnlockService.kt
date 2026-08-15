@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.yukarlo.unlockmymac.AppContainer
+import com.yukarlo.unlockmymac.AppVisibility
 import com.yukarlo.unlockmymac.ble.BleAdvertiser
 import com.yukarlo.unlockmymac.ble.GattContext
 import com.yukarlo.unlockmymac.ble.GattServerController
@@ -225,6 +226,25 @@ class BleUnlockService :
                 expiresAtElapsedMs = pending.expiresAtElapsedMs,
             ),
         )
+        // With the app on screen the card set above *is* the prompt, so neither of the surfaces meant
+        // for a user who is elsewhere gets raised. A notification and a banner on top of a card asking
+        // the same thing is the same question three times, and the banner would cover the card it
+        // duplicates.
+        //
+        // The mirror below still goes out. It is a different device, and the watch is worth telling even
+        // when the phone is in hand — suppressing that would mean walking away mid-request with no prompt
+        // anywhere.
+        if (AppVisibility.isForeground) {
+            appContainer.eventLog.info("Approval needed for $tag (asking in the app)")
+            // The card is silent on its own, and the notification that used to make the noise is being
+            // suppressed right here. Without this an approval can go unnoticed on the very screen it is
+            // displayed on.
+            container.notifier.playApprovalAlert(this)
+            promptedChallengeId = pending.id
+            ApprovalMirror.broadcastRequest(this, pending.id, pairedMacName)
+            return
+        }
+
         // Raised before the notification-permission gate: the overlay is a separate surface with its
         // own permission, so a user who refused notifications but allowed the overlay still gets asked.
         container.notifier.showApprovalOverlay(this, pending.id, pairedMacName)

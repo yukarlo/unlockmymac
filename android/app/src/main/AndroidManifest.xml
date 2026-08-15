@@ -21,6 +21,10 @@
          without it the approval notification is unchanged, and it cannot cover the lock screen
          either way. Play policy restricts this permission; this is a personal sideloaded build. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+    <!-- Buzzes for an approval request shown as an in-app card while the phone is set to vibrate, where
+         the notification that would normally have alerted is deliberately suppressed. A normal
+         permission: granted at install, no runtime prompt. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- Used only by the pairing screen to scan the Mac's QR code. -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <!-- Restart the peripheral after a reboot or an app update. -->
