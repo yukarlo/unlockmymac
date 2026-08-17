@@ -23,3 +23,6 @@ xcuserdata/
 
 # Which device you last deployed to. Pure machine state, and it has changed on almost every build.
 /.idea/deploymentTargetSelector.xml
+
+# Coverage artifact dropped by `xcodebuild test`; lands in the repo root and in macos/.
+default.profraw
