@@ -5,7 +5,17 @@ import android.content.Context
 import android.content.Intent
 import com.yukarlo.unlockmymac.container
 
-/** Handles the Approve/Deny buttons on the approval notification. */
+/**
+ * Handles the Approve/Deny buttons on the approval notification.
+ *
+ * Every path withdraws *both* surfaces. The notification is the one being tapped, but a banner may be on
+ * screen for the same request, and only one of the three paths below has anything downstream that would
+ * take it down: a local challenge resolves through the service, which calls `onApprovalNoLongerValid` and
+ * hides it. A mirrored one does not — this device holds nothing to resolve — so it relied on the holder
+ * answering and echoing a dismiss back over the Wearable link. That left the card up for a round trip,
+ * and indefinitely if the other device was unreachable: still on screen, still tappable, against a
+ * question already answered.
+ */
 class ApprovalActionReceiver : BroadcastReceiver() {
     override fun onReceive(
         context: Context,
@@ -16,7 +26,7 @@ class ApprovalActionReceiver : BroadcastReceiver() {
             // Withdraw first. There is no challenge to resolve — this is the test prompt, which uses a
             // negative id — but the notification is real, and returning without cancelling left it stuck
             // in the shade with buttons that did nothing.
-            context.container.notifier.cancelApproval(context)
+            withdrawPrompt(context)
             return
         }
         val approved =
@@ -29,7 +39,7 @@ class ApprovalActionReceiver : BroadcastReceiver() {
         if (originNode != null) {
             // This prompt was a copy of another device's challenge; we hold nothing to resolve.
             ApprovalMirror.sendDecision(context, originNode, id, approved)
-            context.container.notifier.cancelApproval(context)
+            withdrawPrompt(context)
             return
         }
 
@@ -41,7 +51,19 @@ class ApprovalActionReceiver : BroadcastReceiver() {
                 putExtra(BleUnlockService.EXTRA_APPROVED, approved)
             },
         )
+        withdrawPrompt(context)
+    }
+
+    /**
+     * Takes down every surface for the request that was just answered.
+     *
+     * Hiding the banner here is belt-and-braces on the local path — the service does it too, on its way
+     * through `onApprovalNoLongerValid` — and it is the only thing that does it on the mirrored path.
+     * Both are idempotent, so answering once cannot leave a stale card and answering twice costs nothing.
+     */
+    private fun withdrawPrompt(context: Context) {
         context.container.notifier.cancelApproval(context)
+        context.container.notifier.hideApprovalOverlay(context)
     }
 
     companion object {
