@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.os.Build
 import android.util.Log
@@ -363,13 +364,22 @@ class GattServerController(
                 is ChallengeSessions.Result.Refused -> null
             } ?: return
 
+        // Recorded so [onNotificationSent] can name the challenge it belongs to: the callback is given
+        // only a device, and there is at most one push in flight per connection.
+        pushedTagByAddress[address] = tag
+
         runCatching { notifyCharacteristic(server, device, characteristic, signature) }
             // "Handed to the stack", not "delivered". `notifyCharacteristicChanged` returning without
             // throwing only means the notification was queued — measured 2026-08-14 23:58:34, this
             // logged success for a push the Mac never received, because the link had stopped carrying
             // ATT traffic in both directions. Overstating it here sent the investigation the wrong way.
-            .onSuccess { eventLog.info("Handed the signature for $tag to the stack to push") }
-            .onFailure { eventLog.warn("Could not push the signature for $tag: ${it.message}") }
+            //
+            // The queue status is now reported rather than discarded, and [onNotificationSent] reports
+            // what became of it. Between them they answer what four rounds of app-level logging could
+            // not: whether a push the Mac never received had even left this phone.
+            .onSuccess { queued ->
+                eventLog.info("Handed the signature for $tag to the stack to push (queued: $queued)")
+            }.onFailure { eventLog.warn("Could not push the signature for $tag: ${it.message}") }
     }
 
     /**
@@ -381,19 +391,50 @@ class GattServerController(
         device: BluetoothDevice,
         characteristic: BluetoothGattCharacteristic,
         value: ByteArray,
-    ) {
+    ): String =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            server.notifyCharacteristicChanged(device, characteristic, false, value)
+            // API 33 returns a status code; anything but SUCCESS means the stack declined to queue it.
+            when (val status = server.notifyCharacteristicChanged(device, characteristic, false, value)) {
+                BluetoothStatusCodes.SUCCESS -> "accepted"
+                else -> "declined, status $status"
+            }
         } else {
             @Suppress("DEPRECATION")
             characteristic.value = value
             @Suppress("DEPRECATION")
-            server.notifyCharacteristicChanged(device, characteristic, false)
+            if (server.notifyCharacteristicChanged(device, characteristic, false)) "accepted" else "declined"
         }
-    }
+
+    /**
+     * The challenge tag of the push in flight per connection, so [onNotificationSent] can name it.
+     *
+     * At most one entry per address: a challenge is signed once, and the push happens once.
+     */
+    private val pushedTagByAddress = ConcurrentHashMap<String, String>()
 
     private val callback =
         object : BluetoothGattServerCallback() {
+            /**
+             * Reports what became of a pushed signature.
+             *
+             * The missing half of the stall investigation. A push the Mac never received previously left
+             * one line — "handed to the stack" — and no way to tell whether the stack ever put it on air.
+             * This fires when the controller has sent the notification, so its absence after a hand-off
+             * means the push never left this phone, and its presence means it did and the Mac lost it.
+             * Those need opposite fixes, which is why four rounds of logging could not close this.
+             */
+            override fun onNotificationSent(
+                device: BluetoothDevice,
+                status: Int,
+            ) {
+                val tag = pushedTagByAddress.remove(device.address) ?: return
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    eventLog.info("Signature for $tag left the phone")
+                } else {
+                    eventLog.warn("Signature for $tag was not sent (status $status)")
+                }
+            }
+
             @SuppressLint("MissingPermission")
             override fun onConnectionStateChange(
                 device: BluetoothDevice,
@@ -498,7 +539,14 @@ class GattServerController(
             ) {
                 noteEngagement(device)
                 when (characteristic.uuid) {
-                    BleUuids.RESPONSE -> handleResponseRead(device, requestId, offset)
+                    BleUuids.RESPONSE -> {
+                        // Logged on arrival, before anything is decided about it. The Mac's reads going
+                        // unanswered during a stall could mean the stack never delivered them here, or
+                        // that they arrived and the reply was lost on the way back. Only a record of
+                        // arrivals tells those apart, and there was none.
+                        if (offset == 0) eventLog.info("Read arrived for the response characteristic")
+                        handleResponseRead(device, requestId, offset)
+                    }
                     BleUuids.PAIRING -> handlePairingRead(device, requestId, offset)
                     BleUuids.ENROLMENT -> handleEnrolmentRead(device, requestId, offset)
                     else -> respond(device, requestId, GattStatus.REJECTED, offset, true)

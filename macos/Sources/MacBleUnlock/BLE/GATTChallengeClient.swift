@@ -391,9 +391,26 @@ final class GATTChallengeClient: NSObject {
     }
 
     /// Aborts in-flight handshake.
-    func cancel() {
+    /// Abandons the handshake in flight, recording why.
+    ///
+    /// The reason is not decoration. `finish(invokeCompletion: false)` deliberately reports nothing to the
+    /// caller, so a cancelled handshake used to leave *no* line at all — the log simply stopped mid-exchange
+    /// and the "gave up" timeline appeared later, when the state next changed. On 2026-08-17 14:26:53 that
+    /// silence cost a full investigation: the display slept 0.36s after a challenge was written, the phone
+    /// went on to approve it and push a signature into a link that no longer existed, and from the Mac's
+    /// side it was indistinguishable from the transport stall we had been hunting for days.
+    ///
+    /// Whether the peer had already been asked matters more than the cancellation itself, so it is called
+    /// out: a prompt is now sitting unanswerable on someone's phone, and they will be asked again.
+    func cancel(reason: String) {
         bleCentral.queue.async { [weak self] in
             guard let self, let peripheral = self.activePeripheral else { return }
+            let stranded = self.isApprovalPendingFlag
+            EventLogger.shared.info(
+                category: "GATT",
+                "Abandoning the handshake with \(self.targetDeviceName(for: peripheral)) — \(reason)"
+                    + (stranded ? "; a prompt was already showing and cannot be answered now" : ""),
+            )
             self.finish(.failure(.timedOut), for: peripheral, disconnect: true, invokeCompletion: false)
         }
     }

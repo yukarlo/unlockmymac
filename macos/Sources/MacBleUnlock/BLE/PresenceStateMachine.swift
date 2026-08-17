@@ -180,8 +180,7 @@ final class PresenceStateMachine: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             guard let self, self.gattClient.isBusy else { return }
-            EventLogger.shared.info(category: "State", "Sleeping — abandoning in-flight handshake")
-            self.gattClient.cancel()
+            self.gattClient.cancel(reason: "the Mac is going to sleep")
         }
 
         wakeObserverToken = NSWorkspace.shared.notificationCenter.addObserver(
@@ -192,7 +191,7 @@ final class PresenceStateMachine: ObservableObject {
             guard let self else { return }
             // Belt and braces: if a session somehow survived the sleep, drop it before
             // resetting state, or the two will disagree and every later handshake is refused.
-            if self.gattClient.isBusy { self.gattClient.cancel() }
+            if self.gattClient.isBusy { self.gattClient.cancel(reason: "the Mac woke from sleep") }
             // Only relevant while locked — that is the only time the radio is up.
             guard self.systemActionController.isScreenLocked else { return }
             // Same rule as the display-wake path: a stall from before the sleep is stale and
@@ -238,7 +237,7 @@ final class PresenceStateMachine: ObservableObject {
             .sink { [weak self] isEmpty in
                 guard let self, isEmpty else { return }
                 EventLogger.shared.info(category: "State", "Last paired device forgotten — standing down")
-                if self.gattClient.isBusy { self.gattClient.cancel() }
+                if self.gattClient.isBusy { self.gattClient.cancel(reason: "the last paired device was forgotten") }
                 self.transitionTo(.absent)
                 self.bleCentral.stop()
             }
@@ -286,7 +285,7 @@ final class PresenceStateMachine: ObservableObject {
                     // An approval prompt waiting on a human is pointless once the screen the
                     // human would unlock into has gone dark; leaving it in flight would strand
                     // a notification on the phone for a login that can no longer happen.
-                    if self.gattClient.isBusy { self.gattClient.cancel() }
+                    if self.gattClient.isBusy { self.gattClient.cancel(reason: "the display went to sleep") }
                     self.stopHeartbeatTimer()
                     return
                 }
@@ -331,7 +330,7 @@ final class PresenceStateMachine: ObservableObject {
         EventLogger.shared.info(category: "State", "Screen unlocked — stopping BLE until next lock")
         // Stopping the scan does not touch an in-flight connection, so without this the old
         // handshake keeps retrying and logging failures after we have supposedly shut down.
-        if gattClient.isBusy { gattClient.cancel() }
+        if gattClient.isBusy { gattClient.cancel(reason: "the screen was unlocked") }
         bleCentral.stop()
         stopHeartbeatTimer()
         resetAbsenceTimer()

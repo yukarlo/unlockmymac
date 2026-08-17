@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        gattChallengeClient.cancel()
+        gattChallengeClient.cancel(reason: "the app is quitting")
         bleCentral.stop()
         EventLogger.shared.info(category: "App", "MacBleUnlock shutting down")
     }
