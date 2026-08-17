@@ -157,8 +157,35 @@ class BleUnlockService :
         // ChallengeSessions. With a prompt sitting unanswered nothing does, so one survived
         // overnight and was "approved" 10.5 hours later against a Mac that had long gone.
         lifecycleScope.launch(Dispatchers.IO) {
+            val startedAtMs = android.os.SystemClock.elapsedRealtime()
+            var nextHeartbeatMs = startedAtMs + ADVERTISING_HEARTBEAT_INTERVAL_MS
             while (true) {
                 delay(SESSION_SWEEP_INTERVAL_MS)
+
+                // Periodic proof of life. Nothing can log its own death by SIGKILL, so the value here is
+                // the *last* heartbeat: it bounds the kill to the half hour after it. Without one, an
+                // outage looks like a gap of unknown start between two ordinary lines.
+                val nowMs = android.os.SystemClock.elapsedRealtime()
+                if (nowMs >= nextHeartbeatMs) {
+                    // Advanced from the last scheduled point, not from now. Anchoring to `now` made every
+                    // heartbeat inherit the lateness of the one before it: measured overnight, a 30-minute
+                    // interval had drifted to 32 minutes by the twelfth beat, which quietly widens the
+                    // window a kill gets bounded to.
+                    //
+                    // Resynchronised rather than caught up if the loop was stalled longer than a whole
+                    // interval — Doze can stretch the 15s sweep — because a burst of backdated heartbeats
+                    // would say the opposite of what a heartbeat is for.
+                    nextHeartbeatMs += ADVERTISING_HEARTBEAT_INTERVAL_MS
+                    if (nextHeartbeatMs <= nowMs) {
+                        nextHeartbeatMs = nowMs + ADVERTISING_HEARTBEAT_INTERVAL_MS
+                    }
+                    val upMinutes = (nowMs - startedAtMs) / 60_000
+                    val state = if (advertiser.isActive) "still broadcasting" else "NOT broadcasting"
+                    appContainer.eventLog.info(
+                        "Heartbeat: $state after ${upMinutes / 60}h ${upMinutes % 60}m, " +
+                            "${appContainer.status.status.value.connectedCentrals} central(s) connected",
+                    )
+                }
                 if (appContainer.sessions.sweepExpired()) {
                     appContainer.eventLog.info("Approval request expired; withdrawing the prompt")
                     onApprovalNoLongerValid()
@@ -459,6 +486,9 @@ class BleUnlockService :
         private const val ADVERTISE_RESTART_DELAY_MS = 500L
 
         /** How often to drop expired challenges and withdraw their prompts. */
+        /** How often to record that the peripheral is still alive and broadcasting. */
+        private const val ADVERTISING_HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000L
+
         private const val SESSION_SWEEP_INTERVAL_MS = 15_000L
 
         fun start(context: Context) {
