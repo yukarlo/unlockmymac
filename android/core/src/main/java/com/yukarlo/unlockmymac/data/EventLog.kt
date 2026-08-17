@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -57,7 +58,16 @@ class EventLog(
     val events: StateFlow<List<LogEvent>> = _events.asStateFlow()
 
     init {
-        scope.launch { _events.value = readFromDisk() }
+        // Merged, not assigned. `_events.value = readFromDisk()` raced anything logged before the file
+        // read finished and threw it away — and the earliest lines of a run are the ones worth keeping,
+        // because that is where "previous run ended abruptly" is written. The next `persist` then wrote
+        // the truncated list back, so the loss was permanent.
+        //
+        // Disk entries go first: they are older than anything this process can have logged.
+        scope.launch {
+            val fromDisk = readFromDisk()
+            _events.update { live -> (fromDisk + live).takeLast(CAPACITY) }
+        }
     }
 
     fun info(message: String) = add(EventLevel.INFO, message)
@@ -106,7 +116,10 @@ class EventLog(
 
     private companion object {
         const val FILE_NAME = "events.json"
-        const val CAPACITY = 200
+        // 500, not 200. This log is the only record of what the peripheral did while nobody was
+        // watching, and a few busy minutes of connects and disconnects used to evict hours of it —
+        // which is how an eleven-hour outage came to have no visible beginning.
+        const val CAPACITY = 500
         const val TAG = "EventLog"
     }
 }

@@ -42,7 +42,7 @@ class DiagnosticsViewModel(
             container.pairing.deviceId,
             keyInfo,
         ) { events, paired, deviceId, key ->
-            DiagnosticsUiState(events.asReversed(), paired, deviceId, key)
+            DiagnosticsUiState(events.asReversed().take(DISPLAYED_EVENTS), paired, deviceId, key)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -96,5 +96,18 @@ class DiagnosticsViewModel(
                 }
             container.eventLog.warn("Unpaired; identity key regenerated")
         }
+    }
+
+    private companion object {
+        /**
+         * How many events the screen renders, out of the [com.yukarlo.unlockmymac.data.EventLog.CAPACITY]
+         * kept on disk.
+         *
+         * The list is a plain `Column` inside a scroller rather than a `LazyColumn` — it cannot be lazy,
+         * being nested in a vertical scroll on the same axis — so every row is composed whether or not it
+         * is on screen. 500 of those is a visibly slower screen for history nobody scrolls to. The full
+         * set is still in `files/events.json` when a longer window is needed.
+         */
+        const val DISPLAYED_EVENTS = 200
     }
 }
