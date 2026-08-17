@@ -175,16 +175,33 @@ class BleAdvertiser(
             }
     }
 
+    /**
+     * Stops advertising, recording *why*.
+     *
+     * The reason is the point. Every stop used to log the same bare "Advertising stopped", so a log
+     * showing the radio going quiet said nothing about whether the user paused it, Bluetooth went off, a
+     * central disconnected, or the service was being torn down — and those have completely different
+     * implications for whether it is coming back.
+     */
     @SuppressLint("MissingPermission") // Stopping is harmless if the permission was revoked.
-    fun stop() = synchronized<Unit>(lock) {
+    fun stop(reason: String) = synchronized<Unit>(lock) {
         val current = advertiser ?: return
         advertiser = null
         activeMode = null
         runCatching { current.stopAdvertising(callback) }
             .onFailure { Log.w(TAG, "stopAdvertising threw", it) }
         status.setAdvertising(AdvertisingState.STOPPED)
-        eventLog.info("Advertising stopped")
+        eventLog.info("Advertising stopped ($reason)")
     }
+
+    /**
+     * Whether a live advertising handle is held.
+     *
+     * Honest about its limits: this reports what *this process* believes, not what the controller is
+     * doing. A controller that stopped advertising on its own without reporting it would still read as
+     * active here — which has happened, hence the `ALREADY_STARTED` handling above.
+     */
+    val isActive: Boolean get() = synchronized(lock) { advertiser != null }
 
     /**
      * Tears the advertisement down and brings it back up.
@@ -194,7 +211,7 @@ class BleAdvertiser(
      * discoverable exactly once per app start.
      */
     fun restart(mode: AdvertiseMode) {
-        stop()
+        stop("restarting")
         start(mode)
     }
 

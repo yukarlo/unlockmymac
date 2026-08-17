@@ -24,6 +24,8 @@ import com.yukarlo.unlockmymac.core.R
 import com.yukarlo.unlockmymac.data.AdvertisingState
 import com.yukarlo.unlockmymac.data.AppSettings
 import com.yukarlo.unlockmymac.data.ApprovalRequest
+import com.yukarlo.unlockmymac.data.ProcessExitReason
+import com.yukarlo.unlockmymac.data.ServiceRunMarker
 import com.yukarlo.unlockmymac.data.Timeouts
 import com.yukarlo.unlockmymac.permissions.BlePermissions
 import com.yukarlo.unlockmymac.util.challengeTag
@@ -43,6 +45,9 @@ class BleUnlockService :
     LifecycleService(),
     GattServerListener {
     private lateinit var appContainer: AppContainer
+
+    /** Set for the duration of a run, so the next start can tell a kill from an orderly stop. */
+    private lateinit var runMarker: ServiceRunMarker
     private lateinit var advertiser: BleAdvertiser
     private lateinit var gattServer: GattServerController
 
@@ -88,6 +93,21 @@ class BleUnlockService :
     override fun onCreate() {
         super.onCreate()
         appContainer = container
+
+        // Before anything else, so the very first thing in the log for a run is whether the previous one
+        // was killed. `onDestroy` cannot report that — a kill is precisely the case where it never runs.
+        runMarker = ServiceRunMarker(this)
+        if (runMarker.beginRun()) {
+            // The marker says the last run skipped `onDestroy`; the system says why. Both, because the
+            // marker is the only thing that knows a run *of this service* was cut short, and the exit
+            // record is the only thing that knows whether that was a force stop, a reinstall or memory
+            // pressure — which call for completely different responses, or none at all.
+            val reason = ProcessExitReason.describeLast(this) ?: "reason unavailable"
+            val advice = ProcessExitReason.adviceFor(this)
+            appContainer.eventLog.warn(
+                "Previous run ended abruptly — $reason." + (advice?.let { " $it" } ?: ""),
+            )
+        }
         advertiser = BleAdvertiser(this, appContainer.status, appContainer.eventLog)
         gattServer =
             GattServerController(
@@ -199,6 +219,10 @@ class BleUnlockService :
         kotlinx.coroutines.runBlocking(Dispatchers.IO) { teardownRadio() }
         appContainer.status.setServiceRunning(false)
         container.notifier.cancelApproval(this)
+
+        // Cleared on any `onDestroy`, not only the user-requested one: reaching here at all means the
+        // process was given the chance to shut down, which is the distinction the marker exists to draw.
+        runMarker.endRunCleanly()
 
         if (stopRequestedByUser) {
             stopRequestedByUser = false
@@ -372,7 +396,7 @@ class BleUnlockService :
 
     private suspend fun teardownRadio() =
         withContext(Dispatchers.IO) {
-            advertiser.stop()
+            advertiser.stop("service is shutting down")
             gattServer.close()
         }
 
